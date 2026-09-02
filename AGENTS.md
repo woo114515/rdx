@@ -8,14 +8,14 @@ Keep package responsibilities narrow. Planned boundaries are bringup, base contr
 
 ## Build, Test, and Development Commands
 
-The ROS distribution is not confirmed yet. Do not add distribution-specific dependencies until the first-boot inspection is complete.
+The target is ROS 2/TROS Humble on Ubuntu 22.04. Keep dependencies compatible with aarch64 and the vendor workspace.
 
 - `./scripts/collect_system_info.sh` — collect read-only board, device, and ROS diagnostics.
 - `git diff --check` — detect whitespace errors before committing.
 - `python3 -m pytest tests` — run Python tests once the first package lands.
 - `colcon build --symlink-install` — build the workspace after ROS packages are created.
 
-Run ROS commands from the repository root and source the detected system ROS environment before building.
+On the robot, source `/opt/tros/humble/setup.bash` and the Yahboom workspace before building.
 
 ## Coding Style & Naming Conventions
 

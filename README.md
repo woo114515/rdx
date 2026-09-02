@@ -2,15 +2,16 @@
 
 本仓库用于开发和演示 ROSMASTER X3 实体机器人的三项能力：底盘基本控制、二维 SLAM 与自主导航、彩色柱体自主分类推动。
 
-## 已确认硬件
+## 已确认平台
 
 - ROSMASTER X3 四麦克纳姆轮底盘
-- 地平线 RDK X5 主控
+- 地平线 RDK X5 V1.0 主控
 - Orbbec/Oradar MS200P 二维激光雷达
 - Sony IMX219 CSI 相机
 - 无活动关节的固定叉形推动结构
+- Ubuntu 22.04.5、RDK OS 3.0.0、ROS 2/TROS Humble
 
-实际系统镜像、ROS 发行版、底盘驱动接口和传感器话题需在机器人首次开机后确认。在此之前不假定 `/cmd_vel`、里程计或 TF 名称。
+2026-09-02 已通过 SSH 完成只读盘点，确认厂商工作区、串口映射和 ROS 软件环境。详见 [实机平台基线](docs/platform-baseline.md)。
 
 ## Demo 范围
 
@@ -27,19 +28,24 @@ config/      跨节点参数模板与现场配置
 docs/        架构、路线图和实机操作文档
 reference/   官方资料链接与可再分发参考材料
 scripts/     环境检查和开发辅助脚本
-src/         ROS 功能包（确认 ROS 环境后创建）
+src/         本项目 ROS 功能包
 tests/       脱离硬件运行的自动化测试
 ```
 
 ## 当前阶段
 
-仓库处于首次开机准备阶段。机器人联网并开放 SSH 后，先运行：
+SSH 和静态环境盘点已完成。下一步是在确保车轮架空或场地清空后，分别启动底盘、雷达和相机驱动，验证话题、频率和 TF；在此之前不发送运动指令。
+
+只读检查可从本机运行：
 
 ```bash
-./scripts/collect_system_info.sh
+ssh -o IdentitiesOnly=yes \
+  -i ~/.ssh/rdx_ed25519 \
+  sunrise@10.42.0.72 'bash -s' \
+  < scripts/collect_system_info.sh
 ```
 
-该脚本只读取系统、设备和 ROS 状态，不启动驱动，也不发送运动指令。完整步骤见 [首次开机检查](docs/bringup.md)，开发里程碑与待定事项见 [开发路线图](docs/roadmap.md)。
+直连地址由 DHCP 分配，可能变化。连接方式见 [SSH 说明](config/ssh/README.md)，实机步骤见 [首次开机检查](docs/bringup.md)，里程碑见 [开发路线图](docs/roadmap.md)。
 
 ## 安全原则
 

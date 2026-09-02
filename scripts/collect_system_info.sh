@@ -44,8 +44,16 @@ section "CPU and memory"
 run_if_available lscpu
 run_if_available free -h
 
+section "Storage"
+run_if_available df -hT / /home
+
 section "USB and serial devices"
 run_if_available lsusb
+for device_path in /dev/oradar /dev/myserial; do
+  if [[ -e "$device_path" ]]; then
+    ls -l "$device_path"
+  fi
+done
 for device_path in /dev/ttyACM* /dev/ttyUSB* /dev/serial/by-id/*; do
   if [[ -e "$device_path" ]]; then
     ls -l "$device_path"
@@ -81,6 +89,15 @@ else
   printf 'No known ROS setup file found\n'
 fi
 
+vendor_setup="/home/sunrise/yahboomcar_ws/install/setup.bash"
+if [[ -r "$vendor_setup" ]]; then
+  printf 'Sourcing %s\n' "$vendor_setup"
+  # shellcheck disable=SC1090
+  source "$vendor_setup"
+else
+  printf 'No Yahboom workspace setup file found\n'
+fi
+
 printf 'ROS_DISTRO='
 printenv ROS_DISTRO 2>/dev/null || printf 'unset\n'
 printf 'TROS_DISTRO='
@@ -99,6 +116,11 @@ if command -v ros2 >/dev/null 2>&1; then
 
   section "Active ROS topics"
   ros2 topic list -t 2>&1 || true
+
+  section "Relevant running processes"
+  ps -eo pid,user,comm,args 2>&1 \
+    | grep -Ei 'ros|robot|yahboom|lidar|camera|mipi' \
+    | grep -v grep || true
 else
   printf 'ros2 is not installed or not sourced\n'
 fi
