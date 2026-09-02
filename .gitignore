@@ -1,0 +1,28 @@
+# ROS/colcon outputs
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+
+# C/C++
+compile_commands.json
+
+# Editors and local configuration
+.idea/
+.vscode/
+.env
+
+# Runtime data and diagnostics
+diagnostics/
+artifacts/
+rosbag2_*/
+*.bag
+*.db3
+*.mcap

@@ -2,29 +2,33 @@
 
 ## Project Structure & Module Organization
 
-This repository is currently a minimal scaffold. The only established directory is `reference/`, reserved for supporting specifications, design notes, sample data, or other material that informs implementation but is not shipped as application code.
+This repository develops three ROSMASTER X3 demos using an RDK X5, MS200P LiDAR, and IMX219 camera. Put ROS packages in `src/`, shared parameters in `config/`, tests in `tests/`, scripts in `scripts/`, and runbooks in `docs/`. Keep vendor links and redistributable material in `reference/`; do not commit protected downloads or system images.
 
-As the project grows, keep production code under `src/`, automated tests under `tests/`, and static resources under `assets/`. Mirror source paths in the test tree—for example, test `src/control/motor.py` in `tests/control/test_motor.py`. Avoid committing generated output; place it in a clearly named directory such as `build/` and add that directory to `.gitignore`.
+Keep package responsibilities narrow. Planned boundaries are bringup, base control, navigation, perception, and sorting. Hardware access should sit behind ROS topics or services so logic can be tested without a connected robot.
 
 ## Build, Test, and Development Commands
 
-No build system, dependency manifest, or test runner is configured yet. Until tooling is added, useful repository checks include:
+The ROS distribution is not confirmed yet. Do not add distribution-specific dependencies until the first-boot inspection is complete.
 
-- `find . -maxdepth 3 -type f` — review the current file layout.
-- `git diff --check` — detect trailing whitespace and malformed conflict markers once the repository is initialized with Git.
+- `./scripts/collect_system_info.sh` — collect read-only board, device, and ROS diagnostics.
+- `git diff --check` — detect whitespace errors before committing.
+- `python3 -m pytest tests` — run Python tests once the first package lands.
+- `colcon build --symlink-install` — build the workspace after ROS packages are created.
 
-When adding a toolchain, provide one documented entry point (preferably `make build`, `make test`, and `make lint`) and update this section in the same change.
+Run ROS commands from the repository root and source the detected system ROS environment before building.
 
 ## Coding Style & Naming Conventions
 
-Use the standard formatter for the chosen language and commit its configuration. Default to spaces, UTF-8, LF line endings, and a final newline. Name files and modules descriptively: `snake_case` for Python, `kebab-case` for documentation and assets, and `PascalCase` for types where the language convention supports it. Keep functions focused and comments centered on intent rather than restating code.
+Use four spaces in Python, PEP 8 naming, type hints on public APIs, and `snake_case` ROS package, node, topic, and parameter names. Use `PascalCase` for C++ types and `snake_case` for files and functions. Prefer Python unless profiling proves a C++ implementation is necessary. Format and lint with repository-pinned tools once introduced; do not mix drive-by formatting with behavior changes.
 
 ## Testing Guidelines
 
-Add tests with every behavioral change or bug fix. Use the ecosystem-standard test framework selected by the first implementation, and document installation and execution commands here. Prefer deterministic unit tests; isolate hardware, network, time, and filesystem dependencies behind fixtures or fakes. Name tests after observable behavior, such as `test_stops_motor_on_timeout`.
+Use `pytest` for pure Python logic and ROS launch tests for node integration. Name tests after behavior, such as `test_stops_when_command_times_out`. Mock time, sensors, and motion outputs in automated tests. Every motion feature must include a zero-velocity shutdown path and a test for stale or missing input.
 
 ## Commit & Pull Request Guidelines
 
-No Git history is available to infer an existing convention. Use short, imperative commit subjects, optionally with Conventional Commit prefixes (for example, `feat: add motor timeout handling`). Keep commits scoped and include related tests and documentation.
+Use short Conventional Commit subjects, for example `feat: add figure-eight controller` or `docs: record lidar bringup`. This small project commits directly to `main`; keep each commit focused, tested, and safe to revert. Before pushing, review `git diff`, run relevant tests, and confirm no credentials, machine-specific logs, or large generated files are staged.
 
-Pull requests should explain the problem, summarize the solution, list verification performed, and link relevant issues. Include screenshots or logs when behavior or output changes, and call out new dependencies or configuration requirements.
+## Robot Safety
+
+Never issue motion commands during environment discovery. For real-robot tests, lift the wheels or clear the test area first, keep an operator near the power control, begin at low speed, and verify that timeout, shutdown, and sensor-loss paths command zero velocity.
