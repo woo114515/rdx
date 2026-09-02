@@ -26,3 +26,8 @@ rosbag2_*/
 *.bag
 *.db3
 *.mcap
+
+# Never commit SSH private keys
+config/ssh/*
+!config/ssh/*.pub
+!config/ssh/README.md
