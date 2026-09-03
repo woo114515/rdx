@@ -34,9 +34,11 @@ tests/       脱离硬件运行的自动化测试
 
 ## 当前阶段
 
-SSH、底盘数据链和 MS200P 静态 SLAM 冒烟测试已完成。SLAM Toolbox 已成功从
-`/scan`、里程计和 TF 生成二维栅格地图，但尚未进行安全的移动采图。下一步先
-实现速度安全仲裁和最小 bringup，再在实体场地低速建图。
+SSH、底盘数据链和 MS200P 静态 SLAM 冒烟测试已完成。仓库现在包含速度安全仲裁、最小
+硬件 bringup、SLAM Toolbox 建图启动、静态地图 Nav2 配置，以及按 `task_1 → task_2 →
+task_3 → start` 执行的任务节点。尚未进行实车移动采图、实测 footprint 和航点录入；默认
+航点仍为 `ready: false`。现场操作顺序见
+[建图与导航操作手册](docs/mapping-navigation-guide.md)。
 
 任务二的需求、技术路线、实测数据和验证门槛见
 [固定航点巡逻与动态避障设计](docs/superpowers/specs/2026-09-03-task-2-navigation-design.md)。

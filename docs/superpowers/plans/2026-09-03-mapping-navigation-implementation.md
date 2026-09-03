@@ -41,7 +41,7 @@ Completed:
 - passed Python syntax compilation for both new ROS package setup files, the safety node, and the
   hardware launch file.
 
-Still pending:
+At the pause point, the following items were still pending:
 
 - run `colcon build` for Task 2 and review the installed launch/config layout;
 - implement the SLAM Toolbox mapping package and mapping launch (Task 3);
@@ -333,7 +333,7 @@ git commit -m "feat: add safe robot hardware bringup"
 - SLAM consumes `/scan` and `odom -> base_footprint`, publishes `/map` and `map -> odom`.
 - Teleoperation remains a separate terminal command remapped to `/cmd_vel_teleop`.
 
-- [ ] **Step 1: Write failing configuration tests**
+- [x] **Step 1: Write failing configuration tests**
 
 ```python
 def test_slam_uses_real_time_and_verified_frames():
@@ -347,7 +347,7 @@ def test_slam_uses_real_time_and_verified_frames():
     assert params["resolution"] == 0.05
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 ```bash
 /usr/bin/python3 -m pytest -q tests/test_navigation_configs.py
@@ -355,20 +355,20 @@ def test_slam_uses_real_time_and_verified_frames():
 
 Expected: missing configuration file.
 
-- [ ] **Step 3: Add Humble-compatible SLAM configuration and launch**
+- [x] **Step 3: Add Humble-compatible SLAM configuration and launch**
 
 Base the parameters on the upstream Humble async mapper, use `scan_queue_size: 1`,
 `minimum_travel_distance: 0.15`, `minimum_travel_heading: 0.15`, and retain loop closure.
 The launch accepts `start_hardware`, `slam_params_file`, and `footprint_verified`.
 
-- [ ] **Step 4: Verify GREEN and build**
+- [x] **Step 4: Verify GREEN and build**
 
 ```bash
 /usr/bin/python3 -m pytest -q tests/test_navigation_configs.py
 colcon build --symlink-install --packages-select rdx_navigation
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/rdx_navigation tests/test_navigation_configs.py
@@ -388,7 +388,7 @@ git commit -m "feat: add safe SLAM mapping launch"
 - Remaps Nav2 `/cmd_vel` to `/cmd_vel_nav`.
 - Uses `base_footprint`, `odom`, `map`, and `/odom_raw`.
 
-- [ ] **Step 1: Add failing Nav2 safety tests**
+- [x] **Step 1: Add failing Nav2 safety tests**
 
 ```python
 def test_nav2_is_real_robot_and_routes_velocity_through_safety():
@@ -410,13 +410,13 @@ def test_costmaps_use_scan_and_conservative_clearance():
     assert "/scan" in collect_observation_topics(data)
 ```
 
-- [ ] **Step 2: Verify RED, implement params/launch, verify GREEN**
+- [x] **Step 2: Verify RED, implement params/launch, verify GREEN**
 
 Use the Task 3 pytest command. The initial footprint is a conservative 0.30 m radius, while
 `rdx_safety` still blocks movement until the actual body-plus-fork dimensions are verified.
 Disable backup and spin recovery plugins for the first field test; retain wait behavior.
 
-- [ ] **Step 3: Build and commit**
+- [x] **Step 3: Build and commit**
 
 ```bash
 colcon build --symlink-install --packages-select rdx_navigation
@@ -440,7 +440,7 @@ git commit -m "feat: add static-map Nav2 configuration"
   `nav2_msgs/action/NavigateToPose`.
 - Default waypoint file has `ready: false`; the node refuses to move until real RViz poses are saved.
 
-- [ ] **Step 1: Write failing parser and state-machine tests**
+- [x] **Step 1: Write failing parser and state-machine tests**
 
 ```python
 def test_loads_exact_competition_order(tmp_path):
@@ -476,19 +476,19 @@ def test_success_returns_to_start_and_completes():
     assert machine.state == "completed"
 ```
 
-- [ ] **Step 2: Verify RED, implement pure logic, verify GREEN**
+- [x] **Step 2: Verify RED, implement pure logic, verify GREEN**
 
 ```bash
 PYTHONPATH=src/rdx_mission /usr/bin/python3 -m pytest -q tests/test_mission_logic.py
 ```
 
-- [ ] **Step 3: Implement ROS action client and service control**
+- [x] **Step 3: Implement ROS action client and service control**
 
 The node starts idle, loads the plan once, waits for Nav2 action availability, sends only the current
 goal, cancels on request, and never advances after an aborted/cancelled goal. It logs mission state
 and publishes no velocity messages itself.
 
-- [ ] **Step 4: Build, run all pure tests, and commit**
+- [x] **Step 4: Build, run all pure tests, and commit**
 
 ```bash
 colcon build --symlink-install --packages-select rdx_mission rdx_navigation
@@ -508,7 +508,7 @@ git commit -m "feat: add fixed-order navigation mission"
 - Documents development-machine build, robot deployment, safe mapping, map saving, waypoint entry,
   navigation startup, mission start/cancel, RViz use, and troubleshooting.
 
-- [ ] **Step 1: Write the operator guide**
+- [x] **Step 1: Write the operator guide**
 
 The guide must include these ordered gates:
 
