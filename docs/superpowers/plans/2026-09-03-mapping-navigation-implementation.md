@@ -297,11 +297,11 @@ Laser scans use sensor-data QoS. All topic names and thresholds are ROS paramete
 yahboomcar_base_node/base_node (pub_odom_tf=true)
 yahboomcar_bringup/Mcnamu_driver
 yahboomcar_description/description_launch.py
-oradar_lidar_ms200/ms200_scan.launch.py
+oradar_lidar/ms200_scan.launch.py
 rdx_safety/rdx_safety_node
 ```
 
-It remaps both `/MS200/scan` and relative `scan` to `/scan`. It exposes launch arguments
+It remaps the driver's relative `scan` topic to `/scan`. It exposes launch arguments
 `start_driver`, `start_lidar`, and `footprint_verified`, all defaulting to safe values.
 
 - [ ] **Step 5: Build and inspect**

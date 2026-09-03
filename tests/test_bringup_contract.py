@@ -6,6 +6,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 SAFETY_CONFIG = ROOT / "src/rdx_safety/config/safety.yaml"
 HARDWARE_LAUNCH = ROOT / "src/rdx_bringup/launch/hardware.launch.py"
+BRINGUP_PACKAGE = ROOT / "src/rdx_bringup/package.xml"
 
 
 def test_safety_configuration_fails_closed():
@@ -30,8 +31,17 @@ def test_hardware_launch_is_minimal_and_has_no_teleop_source():
     assert "yahboomcar_base_node" in source
     assert "Mcnamu_driver" in source
     assert "yahboomcar_description" in source
-    assert "oradar_lidar_ms200" in source
+    assert 'get_package_share_directory("oradar_lidar")' in source
+    assert "ms200_scan.launch.py" in source
+    assert "oradar_lidar_ms200" not in source
     assert "rdx_safety_node" in source
     assert "joy" not in source.lower()
     assert "keyboard" not in source.lower()
-    assert '"/MS200/scan", "/scan"' in source
+    assert 'SetRemap(src="scan", dst="/scan")' in source
+
+
+def test_bringup_declares_the_robot_installed_lidar_package():
+    package_xml = BRINGUP_PACKAGE.read_text(encoding="utf-8")
+
+    assert "<exec_depend>oradar_lidar</exec_depend>" in package_xml
+    assert "oradar_lidar_ms200" not in package_xml

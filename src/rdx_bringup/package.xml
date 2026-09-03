@@ -10,7 +10,7 @@
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>oradar_lidar_ms200</exec_depend>
+  <exec_depend>oradar_lidar</exec_depend>
   <exec_depend>rdx_safety</exec_depend>
   <exec_depend>yahboomcar_base_node</exec_depend>
   <exec_depend>yahboomcar_bringup</exec_depend>

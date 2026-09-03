@@ -17,13 +17,10 @@ from launch_ros.actions import Node, SetRemap
 from launch_ros.parameter_descriptions import ParameterValue
 
 
-LIDAR_SCAN_REMAP = ("/MS200/scan", "/scan")
-
-
 def generate_launch_description() -> LaunchDescription:
     safety_share = get_package_share_directory("rdx_safety")
     description_share = get_package_share_directory("yahboomcar_description")
-    lidar_share = get_package_share_directory("oradar_lidar_ms200")
+    lidar_share = get_package_share_directory("oradar_lidar")
 
     start_driver = LaunchConfiguration("start_driver")
     start_lidar = LaunchConfiguration("start_lidar")
@@ -56,7 +53,6 @@ def generate_launch_description() -> LaunchDescription:
     )
     lidar = GroupAction(
         actions=[
-            SetRemap(src=LIDAR_SCAN_REMAP[0], dst=LIDAR_SCAN_REMAP[1]),
             SetRemap(src="scan", dst="/scan"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
