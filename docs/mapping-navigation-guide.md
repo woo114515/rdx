@@ -109,7 +109,7 @@ ros2 topic pub --once /emergency_stop std_msgs/msg/Bool "{data: true}"
 
 ## 6. 故障排查
 
-- `/scan` 无数据：检查 MS200P 电源、`/dev/oradar` 权限和 `ros2 topic list`；确认已经加载 `~/software/library_ws/install/setup.bash`，且 `oradar_lidar` 的 launch 名称仍为 `ms200_scan.launch.py`。
+- `/scan` 无数据：检查 MS200P 电源、`/dev/oradar` 权限和 `ros2 topic list`；确认已经加载 `~/software/library_ws/install/setup.bash`。项目的 hardware launch 会在驱动异常退出 2 秒后自动重启；保持该 launch 运行，不要另开第二个雷达实例争用串口。若它持续反复退出，应停止测试并检查 USB、供电和厂商驱动日志。
 - 安全节点显示 `footprint_unverified`、`emergency_stop`、`scan_timeout`、`scan_missing` 或 `command_timeout`：这是预期的失效保护，先修复原因，不要绕过 `/cmd_vel`。
 - Nav2 报地图不存在：`map:=` 必须指向机器人上实际存在的 `.yaml`，并能读取同目录图像文件。
 - 任务节点提示配置未就绪：检查 `mission.ready: true`、四个名称及顺序，且坐标均为有限数。

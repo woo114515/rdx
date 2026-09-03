@@ -6,21 +6,19 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    GroupAction,
     IncludeLaunchDescription,
     TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, SetRemap
+from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
     safety_share = get_package_share_directory("rdx_safety")
     description_share = get_package_share_directory("yahboomcar_description")
-    lidar_share = get_package_share_directory("oradar_lidar")
 
     start_driver = LaunchConfiguration("start_driver")
     start_lidar = LaunchConfiguration("start_lidar")
@@ -51,15 +49,29 @@ def generate_launch_description() -> LaunchDescription:
         ),
         condition=IfCondition(start_description),
     )
-    lidar = GroupAction(
-        actions=[
-            SetRemap(src="scan", dst="/scan"),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(lidar_share, "launch", "ms200_scan.launch.py")
-                )
-            ),
+    lidar = Node(
+        package="oradar_lidar",
+        executable="oradar_scan",
+        name="MS200",
+        output="screen",
+        parameters=[
+            {
+                "device_model": "MS200",
+                "frame_id": "lidar_link",
+                "scan_topic": "scan",
+                "port_name": "/dev/oradar",
+                "baudrate": 230400,
+                "angle_min": 0.0,
+                "angle_max": 0.0,
+                "range_min": 0.15,
+                "range_max": 20.0,
+                "clockwise": False,
+                "motor_speed": 10,
+            }
         ],
+        remappings=[("scan", "/scan")],
+        respawn=True,
+        respawn_delay=2.0,
         condition=IfCondition(start_lidar),
     )
     safety = Node(

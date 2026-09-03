@@ -31,13 +31,15 @@ def test_hardware_launch_is_minimal_and_has_no_teleop_source():
     assert "yahboomcar_base_node" in source
     assert "Mcnamu_driver" in source
     assert "yahboomcar_description" in source
-    assert 'get_package_share_directory("oradar_lidar")' in source
-    assert "ms200_scan.launch.py" in source
+    assert 'package="oradar_lidar"' in source
+    assert 'executable="oradar_scan"' in source
     assert "oradar_lidar_ms200" not in source
+    assert "respawn=True" in source
+    assert "respawn_delay=2.0" in source
     assert "rdx_safety_node" in source
     assert "joy" not in source.lower()
     assert "keyboard" not in source.lower()
-    assert 'SetRemap(src="scan", dst="/scan")' in source
+    assert 'remappings=[("scan", "/scan")]' in source
 
 
 def test_bringup_declares_the_robot_installed_lidar_package():
