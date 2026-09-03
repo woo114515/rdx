@@ -64,9 +64,40 @@ cb1b05dd269a3be6a30047f31f7daa143cadce85fa06432fa22ec46affc5f094  install-yahboo
 - 使用 `/tmp/yahboomcar-mcnamu-driver.lock` 防止补丁版本重复启动。
 - 将 `/dev/i2c-0` 改为仅在收到 RGB 控制命令时打开，避免底盘启动无条件依赖
   I2C。
+- 发布 `/motor_encoder`（`Int32MultiArray`），数据依次为 M1～M4 的累计
+  编码器计数。
+- 发布 `/wheel_speed`（`Float32MultiArray`），数据依次为 M1～M4 按相邻
+  样本计算的 `ticks/s`，并正确处理有符号 32 位计数器回绕。
 - 在修改后的节点文件头记录日期、备份和本文档位置。
 
 厂商压缩库 `SunriseRobotLib-3.3.9` 未修改。
+
+## 编码器反馈
+
+驱动运行后可监听四轮累计计数：
+
+```bash
+ros2 topic echo /motor_encoder
+```
+
+监听四轮计数变化率：
+
+```bash
+ros2 topic echo /wheel_speed
+```
+
+两个数组的顺序都是 `[M1, M2, M3, M4]`。`/wheel_speed` 的单位明确为
+`ticks/s`，不是 RPM 或 m/s；首次采样没有前一帧可比较，因此固定发布四个
+零值。控制板自动上报、驱动按 10 Hz 发布。
+
+横移诊断时建议记录：
+
+```bash
+ros2 bag record /cmd_vel /vel_raw /motor_encoder /wheel_speed
+```
+
+在确认 M1～M4 的物理轮位、正方向以及每个车轮一圈对应的编码器计数之前，
+不得把 `ticks/s` 直接换算为轮速、RPM 或车体速度。
 
 ## 构建与验证
 
@@ -95,8 +126,9 @@ source /opt/tros/humble/setup.bash
 PYTHONPATH=.:"$PYTHONPATH" python3 -m pytest -q test/test_motion_safety.py
 ```
 
-结果：`10 passed`。测试覆盖限幅、合法值保持、非有限值拒绝、超时边界、回调
-实际限幅、非法回调归零和看门狗超时归零。测试没有实例化驱动、打开串口或
+结果：`15 passed`。测试覆盖限幅、合法值保持、非有限值拒绝、超时边界、回调
+实际限幅、非法回调归零、看门狗超时归零、编码器正反向差值、32 位回绕、
+采样时间换算和首帧归零。测试没有实例化驱动、打开串口或
 发送实车运动命令。
 
 截至本文档记录时，尚未进行通电运行、架空车轮或落地测试。
@@ -129,6 +161,7 @@ colcon build --symlink-install --packages-select yahboomcar_bringup
 - 看门狗与状态发布仍共享单线程 ROS executor；回调永久阻塞会影响看门狗调度。
 - 文件锁只能阻止补丁版节点的重复实例，不能阻止不遵守该锁的其他程序直接
   打开串口。
+- M1～M4 的物理轮位、计数正方向、编码器每圈计数和减速比尚未标定。
 - MCU 是否具备通信丢失自动停车仍需向厂商确认或通过架空车轮测试验证。
 
 因此现场电源控制或硬件急停仍是最终保护。再次落地运行前，必须依次验证启动
