@@ -5,9 +5,10 @@
 ## 0. 上电前检查
 
 1. 给电池充足电，清空场地并安排一名操作员随时可断电。
-2. 测量车体和固定叉形结构从 `base_footprint` 中心到最远点的距离。把实测值加至少 0.05 m，分别写入 `config/nav2.yaml` 的 local/global costmap `robot_radius`；未测量前严禁解锁运动。
-3. 建图和导航都先使用 `emergency_stop_on_start:=true`。急停解除前确认车轮架空或周围无人。
-4. 检查 `df -h /`。2026-09-03 实机根分区使用率为 92%，录制 rosbag 或反复建图前应预留空间。
+2. 若上电后出现持续蜂鸣，先断电检查电池、供电和硬件告警，不得继续启动 ROS 或运动测试。
+3. 测量车体和固定叉形结构从 `base_footprint` 中心到最远点的距离。把实测值加至少 0.05 m，分别写入 `config/nav2.yaml` 的 local/global costmap `robot_radius`；未测量前严禁解锁运动。
+4. 建图和导航都先使用 `emergency_stop_on_start:=true`。急停解除前确认车轮架空或周围无人。
+5. 检查 `df -h /`。2026-09-03 实机根分区使用率为 92%，录制 rosbag 或反复建图前应预留空间。
 
 ## 1. 连接与部署
 
@@ -114,5 +115,7 @@ ros2 topic pub --once /emergency_stop std_msgs/msg/Bool "{data: true}"
 - Nav2 报地图不存在：`map:=` 必须指向机器人上实际存在的 `.yaml`，并能读取同目录图像文件。
 - 任务节点提示配置未就绪：检查 `mission.ready: true`、四个名称及顺序，且坐标均为有限数。
 - RViz 无法从 SSH 打开：在有桌面的开发机运行 RViz，并设置相同 `ROS_DOMAIN_ID`；SSH 只用于启动节点和查看话题。
+
+> 现场修正：当前开发机为 ROS 2 Jazzy，小车为 Humble。2026-09-03 的直接 DDS 测试触发了 `ParticipantEntitiesInfo` 反序列化错误，因此不要继续使用上面所述的跨发行版直连 RViz。后续改用 rosbridge/WebSocket，或在与小车一致的 Humble 环境运行 RViz。
 
 当前仓库未包含实机场地地图和航点，默认 `ready: false` 是有意的安全锁。完成一次实机建图、尺寸测量和航点复核后再解锁。

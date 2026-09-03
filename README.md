@@ -47,6 +47,11 @@ costmap 和行为树能够加载；真实底盘、雷达数据和运动仍须按
 `lidar_link` 模型链路，以及安全节点的急停和 footprint 双重锁定。底盘里程计和运动测试
 仍未执行。
 
+同日进一步测试发现厂商雷达驱动会异常退出，且 Jazzy RViz 与 Humble 小车直接 DDS 通信
+会触发类型反序列化错误。测试末尾出现来源未明的持续蜂鸣，已停止全部项目测试并断电。
+恢复上电前必须先排查供电告警。详见
+[MS200P 与 RViz 现场测试记录](docs/field-test-2026-09-03-lidar-rviz.md)。
+
 任务二的需求、技术路线、实测数据和验证门槛见
 [固定航点巡逻与动态避障设计](docs/superpowers/specs/2026-09-03-task-2-navigation-design.md)。
 
