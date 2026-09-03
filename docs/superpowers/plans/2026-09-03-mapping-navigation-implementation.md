@@ -69,6 +69,14 @@ passes 38 pure/configuration tests, compiles all Python sources, and builds `rdx
 field validation only: measure the real footprint, verify vendor topic/TF names after power-up,
 drive the arena to create a map, record four poses, and test dynamic-obstacle behavior on the RDK.
 
+On-robot update (2026-09-03): commit `a91e327` was deployed to `/home/sunrise/rdx`. All four
+project packages built against TROS Humble and the robot overlays. With `start_hardware:=false` in
+an isolated ROS domain, SLAM Toolbox loaded its Ceres solver, and Nav2 loaded the saved test map and
+configured AMCL, DWB, both costmaps, and the custom behavior tree. Nav2 then waited for the missing
+`odom -> base_footprint` transform as expected. No hardware driver was started and `/cmd_vel` had no
+publisher after the tests exited. The measured footprint and full hardware/motion validation remain
+pending.
+
 ---
 
 ## File Structure
