@@ -63,6 +63,12 @@ The development computer has ROS 2 Jazzy but not Nav2 or SLAM Toolbox. The robot
 required Humble packages, so no package download is planned. No ROS node or physical motion command
 has been run during this implementation session.
 
+Resume update (2026-09-03): Tasks 3–5 and the operator guide are implemented. The repository now
+passes 38 pure/configuration tests, compiles all Python sources, and builds `rdx_safety`,
+`rdx_bringup`, `rdx_navigation`, and `rdx_mission` on the development computer. Remaining work is
+field validation only: measure the real footprint, verify vendor topic/TF names after power-up,
+drive the arena to create a map, record four poses, and test dynamic-obstacle behavior on the RDK.
+
 ---
 
 ## File Structure
@@ -522,7 +528,7 @@ The guide must include these ordered gates:
 8. start static-map navigation and initialize AMCL;
 9. call `/mission/start`; use `/mission/cancel` or emergency stop if needed.
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
 ```bash
 git diff --check
@@ -534,7 +540,7 @@ colcon build --symlink-install
 Expected: tests, compilation, and build pass without launching robot nodes. Nav2 and SLAM runtime
 integration remains an on-robot validation because the development computer lacks those packages.
 
-- [ ] **Step 3: Review for secrets and generated artifacts**
+- [x] **Step 3: Review for secrets and generated artifacts**
 
 ```bash
 git status --short
@@ -543,7 +549,7 @@ git diff --check
 
 Confirm no private keys, maps, rosbag files, `build/`, `install/`, or `log/` are staged.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md docs/mapping-navigation-guide.md docs/roadmap.md
