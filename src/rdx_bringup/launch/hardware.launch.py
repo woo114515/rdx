@@ -1,0 +1,107 @@
+"""Start only the hardware needed for mapping and navigation."""
+
+import os
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+    TimerAction,
+)
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node, SetRemap
+from launch_ros.parameter_descriptions import ParameterValue
+
+
+LIDAR_SCAN_REMAP = ("/MS200/scan", "/scan")
+
+
+def generate_launch_description() -> LaunchDescription:
+    safety_share = get_package_share_directory("rdx_safety")
+    description_share = get_package_share_directory("yahboomcar_description")
+    lidar_share = get_package_share_directory("oradar_lidar_ms200")
+
+    start_driver = LaunchConfiguration("start_driver")
+    start_lidar = LaunchConfiguration("start_lidar")
+    start_description = LaunchConfiguration("start_description")
+    footprint_verified = LaunchConfiguration("footprint_verified")
+    emergency_stop_on_start = LaunchConfiguration("emergency_stop_on_start")
+    safety_params_file = LaunchConfiguration("safety_params_file")
+
+    base_node = Node(
+        package="yahboomcar_base_node",
+        executable="base_node",
+        name="base_node",
+        output="screen",
+        parameters=[{"pub_odom_tf": True}],
+        condition=IfCondition(start_driver),
+    )
+    driver_node = Node(
+        package="yahboomcar_bringup",
+        executable="Mcnamu_driver",
+        name="driver_node",
+        output="screen",
+        condition=IfCondition(start_driver),
+    )
+    description = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(description_share, "launch", "description_launch.py")
+        ),
+        condition=IfCondition(start_description),
+    )
+    lidar = GroupAction(
+        actions=[
+            SetRemap(src=LIDAR_SCAN_REMAP[0], dst=LIDAR_SCAN_REMAP[1]),
+            SetRemap(src="scan", dst="/scan"),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(lidar_share, "launch", "ms200_scan.launch.py")
+                )
+            ),
+        ],
+        condition=IfCondition(start_lidar),
+    )
+    safety = Node(
+        package="rdx_safety",
+        executable="rdx_safety_node",
+        name="rdx_safety",
+        output="screen",
+        parameters=[
+            safety_params_file,
+            {
+                "footprint_verified": ParameterValue(
+                    footprint_verified, value_type=bool
+                ),
+                "emergency_stop_on_start": ParameterValue(
+                    emergency_stop_on_start, value_type=bool
+                ),
+            },
+        ],
+    )
+
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument("start_driver", default_value="true"),
+            DeclareLaunchArgument("start_lidar", default_value="true"),
+            DeclareLaunchArgument("start_description", default_value="true"),
+            DeclareLaunchArgument("footprint_verified", default_value="false"),
+            DeclareLaunchArgument(
+                "emergency_stop_on_start", default_value="true"
+            ),
+            DeclareLaunchArgument(
+                "safety_params_file",
+                default_value=os.path.join(
+                    safety_share, "config", "safety.yaml"
+                ),
+            ),
+            description,
+            base_node,
+            TimerAction(period=0.5, actions=[driver_node]),
+            lidar,
+            safety,
+        ]
+    )

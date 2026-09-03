@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rdx_bringup</name>
+  <version>0.1.0</version>
+  <description>Minimal hardware bringup for the RDX ROSMASTER X3.</description>
+  <maintainer email="maintainers@example.com">RDX Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>oradar_lidar_ms200</exec_depend>
+  <exec_depend>rdx_safety</exec_depend>
+  <exec_depend>yahboomcar_base_node</exec_depend>
+  <exec_depend>yahboomcar_bringup</exec_depend>
+  <exec_depend>yahboomcar_description</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -21,6 +21,48 @@
 - Navigation remains locked until the measured footprint is recorded and `footprint_verified: true`.
 - Automated tests never publish to the physical robot.
 
+## Pause Checkpoint (2026-09-03)
+
+Work is paused at the user's request on branch `feat/navigation-stack` in
+`/home/zyw/x5/rdx/.worktrees/navigation-stack`.
+
+Completed:
+
+- created and committed this implementation plan;
+- implemented the ROS-independent velocity safety core;
+- verified 19 unit tests covering timeouts, emergency stop, unverified footprint, directional
+  obstacles, slowdown, speed limiting, invalid scans, and invalid commands;
+- created the `rdx_safety` ROS package, fail-closed YAML defaults, ROS adapter node, and console
+  entry point;
+- created the `rdx_bringup` package and minimal hardware launch for the verified base, driver,
+  robot description, and MS200P packages;
+- verified 21 total tests, including configuration defaults and the absence of keyboard/gamepad
+  control sources from the minimal launch;
+- passed Python syntax compilation for both new ROS package setup files, the safety node, and the
+  hardware launch file.
+
+Still pending:
+
+- run `colcon build` for Task 2 and review the installed launch/config layout;
+- implement the SLAM Toolbox mapping package and mapping launch (Task 3);
+- implement Humble-compatible static-map Nav2 parameters and launch (Task 4);
+- implement validated waypoint loading and the fixed-order action client (Task 5);
+- write the complete operator runbook and perform repository-wide checks (Task 6);
+- validate vendor launch file names, topic/TF behavior, SLAM, and Nav2 on the RDK X5 after charging.
+
+Resume with:
+
+```bash
+cd /home/zyw/x5/rdx/.worktrees/navigation-stack
+git status --short --branch
+PYTHONPATH=src/rdx_safety /usr/bin/python3 -m pytest -q \
+  tests/test_safety_logic.py tests/test_bringup_contract.py
+```
+
+The development computer has ROS 2 Jazzy but not Nav2 or SLAM Toolbox. The robot already has the
+required Humble packages, so no package download is planned. No ROS node or physical motion command
+has been run during this implementation session.
+
 ---
 
 ## File Structure
@@ -81,7 +123,7 @@ docs/
 - Produces: `SafetyController.evaluate(now, nav_command, nav_stamp, teleop_command, teleop_stamp, scan, scan_stamp, emergency_stop, footprint_verified) -> SafetyDecision`.
 - Selection order: emergency/verification/sensor gates, then fresh teleop command, then fresh Nav2 command.
 
-- [ ] **Step 1: Write failing safety tests**
+- [x] **Step 1: Write failing safety tests**
 
 ```python
 def test_unverified_footprint_blocks_motion():
@@ -154,7 +196,7 @@ def test_teleop_preempts_nav_and_limits_velocity():
     assert decision.velocity == Velocity(0.18, -0.18, 0.6)
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -164,7 +206,7 @@ PYTHONPATH=src/rdx_safety /usr/bin/python3 -m pytest -q tests/test_safety_logic.
 
 Expected: collection fails because `rdx_safety.safety_logic` does not exist.
 
-- [ ] **Step 3: Implement the minimum safety core**
+- [x] **Step 3: Implement the minimum safety core**
 
 `SafetyController.evaluate` must:
 
@@ -177,11 +219,11 @@ Expected: collection fails because `rdx_safety.safety_logic` does not exist.
 7. use the nearest all-around sample for pure rotation;
 8. return a stable reason string for diagnostics.
 
-- [ ] **Step 4: Run tests and verify GREEN**
+- [x] **Step 4: Run tests and verify GREEN**
 
 Run the Step 2 command. Expected: all safety tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/test_safety_logic.py src/rdx_safety/rdx_safety/safety_logic.py
@@ -211,7 +253,7 @@ git commit -m "feat: add velocity safety decision core"
 - Publishes: `/cmd_vel`, `/rdx_safety/state`, and `/rdx_safety/ready`.
 - Hardware launch starts `base_node`, `Mcnamu_driver`, vendor robot description, MS200P, and `rdx_safety_node`; it starts no joystick or keyboard node.
 
-- [ ] **Step 1: Add failing source-selection and shutdown tests**
+- [x] **Step 1: Add failing source-selection and shutdown tests**
 
 ```python
 def test_zero_command_does_not_require_scan():
@@ -229,19 +271,19 @@ def test_emergency_stop_has_highest_priority():
     assert decision.reason == "emergency_stop"
 ```
 
-- [ ] **Step 2: Verify RED, implement, then verify GREEN**
+- [x] **Step 2: Verify RED, implement, then verify GREEN**
 
 Run the Task 1 test command before changing `SafetyController.evaluate`, then run it again after
 adding the idle and emergency-stop branches.
 
-- [ ] **Step 3: Add the ROS node**
+- [x] **Step 3: Add the ROS node**
 
 `SafetyNode` stores the most recent messages using the monotonic ROS clock, evaluates at 20 Hz,
 publishes zero continuously while blocked, and publishes three zero commands during normal teardown.
 Laser scans use sensor-data QoS. All topic names and thresholds are ROS parameters loaded from
 `config/safety.yaml`; `footprint_verified` defaults to false.
 
-- [ ] **Step 4: Add minimal vendor launch**
+- [x] **Step 4: Add minimal vendor launch**
 
 `hardware.launch.py` starts:
 
