@@ -16,7 +16,7 @@
 ## Demo 范围
 
 1. **基本控制**：以低速 8 字轨迹证明底盘运动控制可用，轨迹尺寸与速度可配置。
-2. **SLAM 与导航**：使用 MS200P 建图、保存和加载地图，并自主导航到目标点；动态障碍物策略待现场验收规则确定。
+2. **SLAM 与导航**：使用 MS200P 建图、保存和加载地图，按固定顺序访问任务点 1、2、3 并返回起点；巡逻中应绕开固定障碍和移动人员。
 3. **柱体分类推动**：自主搜索易拉罐大小的彩色柱体，将暖色和冷色柱体整理为两堆。该任务位于独立场地，不复用导航 Demo 的地图。
 
 三个 Demo 分别启动和验收。Python 是首选语言，仅在性能或底层接口需要时使用 C++。
@@ -34,18 +34,24 @@ tests/       脱离硬件运行的自动化测试
 
 ## 当前阶段
 
-SSH 和静态环境盘点已完成。下一步是在确保车轮架空或场地清空后，分别启动底盘、雷达和相机驱动，验证话题、频率和 TF；在此之前不发送运动指令。
+SSH、底盘数据链和 MS200P 静态 SLAM 冒烟测试已完成。SLAM Toolbox 已成功从
+`/scan`、里程计和 TF 生成二维栅格地图，但尚未进行安全的移动采图。下一步先
+实现速度安全仲裁和最小 bringup，再在实体场地低速建图。
+
+任务二的需求、技术路线、实测数据和验证门槛见
+[固定航点巡逻与动态避障设计](docs/superpowers/specs/2026-09-03-task-2-navigation-design.md)。
 
 只读检查可从本机运行：
 
 ```bash
+robot_ip=192.168.49.25  # 替换为当前 DHCP 地址
 ssh -o IdentitiesOnly=yes \
   -i ~/.ssh/rdx_ed25519 \
-  sunrise@10.42.0.72 'bash -s' \
+  sunrise@"${robot_ip}" 'bash -s' \
   < scripts/collect_system_info.sh
 ```
 
-直连地址由 DHCP 分配，可能变化。连接方式见 [SSH 说明](config/ssh/README.md)，实机步骤见 [首次开机检查](docs/bringup.md)，里程碑见 [开发路线图](docs/roadmap.md)。
+有线直连或热点地址均由 DHCP 分配，可能变化。连接方式见 [SSH 说明](config/ssh/README.md)，实机步骤见 [首次开机检查](docs/bringup.md)，里程碑见 [开发路线图](docs/roadmap.md)。
 
 ## 安全原则
 
