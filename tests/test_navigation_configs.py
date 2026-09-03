@@ -6,6 +6,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 SLAM_CONFIG = ROOT / "src/rdx_navigation/config/slam_toolbox.yaml"
 NAV2_CONFIG = ROOT / "src/rdx_navigation/config/nav2.yaml"
+WAYPOINTS_CONFIG = ROOT / "src/rdx_navigation/config/waypoints.yaml"
 MAPPING_LAUNCH = ROOT / "src/rdx_navigation/launch/mapping.launch.py"
 NAVIGATION_LAUNCH = ROOT / "src/rdx_navigation/launch/navigation.launch.py"
 
@@ -36,6 +37,8 @@ def test_mapping_launch_uses_async_slam_and_teleop_input():
     assert "online_async_launch.py" in source
     assert "cmd_vel_teleop" in source
     assert "start_hardware" in source
+    assert "max_linear_speed" in source
+    assert 'default_value="0.12"' in source
     assert "map_saver_cli" not in source
 
 
@@ -77,3 +80,16 @@ def test_navigation_launch_requires_map_and_routes_cmd_vel_nav():
     assert "/opt/ros/humble/share/rdx_navigation" not in (
         NAV2_CONFIG.read_text(encoding="utf-8")
     )
+
+
+def test_default_waypoints_are_locked_until_real_poses_are_recorded():
+    data = yaml.safe_load(WAYPOINTS_CONFIG.read_text(encoding="utf-8"))
+    mission = data["mission"]
+
+    assert mission["ready"] is False
+    assert [item["name"] for item in mission["waypoints"]] == [
+        "task_1",
+        "task_2",
+        "task_3",
+        "start",
+    ]

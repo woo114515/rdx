@@ -30,6 +30,7 @@ def generate_launch_description() -> LaunchDescription:
     start_description = LaunchConfiguration("start_description")
     footprint_verified = LaunchConfiguration("footprint_verified")
     emergency_stop_on_start = LaunchConfiguration("emergency_stop_on_start")
+    max_linear_speed = LaunchConfiguration("max_linear_speed")
     safety_params_file = LaunchConfiguration("safety_params_file")
 
     base_node = Node(
@@ -79,6 +80,9 @@ def generate_launch_description() -> LaunchDescription:
                 "emergency_stop_on_start": ParameterValue(
                     emergency_stop_on_start, value_type=bool
                 ),
+                "max_linear_speed": ParameterValue(
+                    max_linear_speed, value_type=float
+                ),
             },
         ],
     )
@@ -92,6 +96,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "emergency_stop_on_start", default_value="true"
             ),
+            DeclareLaunchArgument("max_linear_speed", default_value="0.18"),
             DeclareLaunchArgument(
                 "safety_params_file",
                 default_value=os.path.join(
