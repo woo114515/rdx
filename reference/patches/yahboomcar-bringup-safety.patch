@@ -1,0 +1,290 @@
+--- a/yahboomcar_bringup/Mcnamu_driver.py
++++ b/yahboomcar_bringup/Mcnamu_driver.py
+@@ -1,8 +1,20 @@
+ #!/usr/bin/env python
+ # encoding: utf-8
++#
++# Local safety patch: 2026-09-03
++# Original backup:
++#   /home/sunrise/vendor-backups/2026-09-03-before-driver-safety
++# Changes: enforce velocity limits, reject non-finite commands, command zero
++# at startup/shutdown, stop after stale cmd_vel, prevent duplicate instances,
++# and open I2C only when RGB control is requested.
++# Procedure and limitations are documented in the RDX repository at:
++#   docs/vendor-driver-safety-patch.md
+ 
+ #public lib
+-from math import pi
++from math import isfinite, pi
++import fcntl
++import signal
++import time
+ from SunriseRobotLib import SunriseRobot
+ import smbus
+ 
+@@ -14,15 +26,31 @@
+ from rclpy.clock import Clock
+ from sensor_msgs.msg import Imu, MagneticField
+ 
+-bus = smbus.SMBus(0)
++def sanitize_motion(vx, vy, angular, x_limit, y_limit, angular_limit):
++	values = (vx, vy, angular)
++	if not all(isfinite(value) for value in values):
++		raise ValueError('motion command must contain finite values')
++	return (
++		max(-x_limit, min(x_limit, vx)),
++		max(-y_limit, min(y_limit, vy)),
++		max(-angular_limit, min(angular_limit, angular)),
++	)
++
++def command_is_stale(last_cmd_time, now, timeout):
++	return last_cmd_time is None or now - last_cmd_time >= timeout
+ 
+ class yahboomcar_driver(Node):
+ 	def __init__(self, name):
+ 		super().__init__(name)
++		self._last_cmd_time = None
++		self._watchdog_stopped = True
++		self._shutting_down = False
++		self._bus = None
+ 		self.RA2DE = 180 / pi
+ 		self.car = SunriseRobot()
+ 		self.car.set_car_type(6)
+ 		self.car.create_receive_threading()
++		self.stop_motion(3)
+ 		
+ 		#get parameter
+ 		self.declare_parameter('imu_link', 'imu_link')
+@@ -43,7 +71,11 @@
+ 		
+ 		self.declare_parameter('angular_limit', 1.0)
+ 		self.angular_limit = self.get_parameter('angular_limit').get_parameter_value().double_value
+-		print (self.angular_limit)
++		print(self.angular_limit)
++		self.declare_parameter('cmd_vel_timeout', 0.25)
++		self.cmd_vel_timeout = self.get_parameter('cmd_vel_timeout').get_parameter_value().double_value
++		if min(self.xlinear_limit, self.ylinear_limit, self.angular_limit, self.cmd_vel_timeout) <= 0.0:
++			raise ValueError('velocity limits and cmd_vel_timeout must be positive')
+ 
+ 		#create subcriber 创建订阅者
+ 		self.sub_cmd_vel = self.create_subscription(Twist,"cmd_vel",self.cmd_vel_callback,1)
+@@ -61,28 +93,59 @@
+ 		
+ 		#create timer
+ 		self.timer = self.create_timer(0.1, self.pub_data)
++		self.safety_timer = self.create_timer(0.05, self.watchdog_callback)
+ 
+ 	#callback function
+ 	def cmd_vel_callback(self, msg):
+         # 小车运动控制，订阅者回调函数
+         # Car motion control, subscriber callback function
+-		if not isinstance(msg, Twist): return
++		if not isinstance(msg, Twist):
++			return
+         # 下发线速度和角速度
+         # Issue linear vel and angular vel
+-		vx = msg.linear.x
+-		vy = msg.linear.y
+-		angular = msg.angular.z
++		try:
++			vx, vy, angular = sanitize_motion(
++				msg.linear.x, msg.linear.y, msg.angular.z,
++				self.xlinear_limit, self.ylinear_limit, self.angular_limit)
++		except ValueError:
++			self.get_logger().error('rejected non-finite cmd_vel')
++			self.stop_motion(3)
++			return
+ 		self.car.set_car_motion(vx, vy, angular)
++		self._last_cmd_time = time.monotonic()
++		self._watchdog_stopped = False
++
++	def stop_motion(self, repeat=1):
++		for _ in range(max(1, repeat)):
++			self.car.set_car_motion(0.0, 0.0, 0.0)
++
++	def watchdog_callback(self):
++		if self._shutting_down:
++			return
++		now = time.monotonic()
++		stale = command_is_stale(self._last_cmd_time, now, self.cmd_vel_timeout)
++		if stale:
++			if not self._watchdog_stopped:
++				self.get_logger().warning('cmd_vel timeout; commanding zero velocity')
++			self.stop_motion()
++			self._watchdog_stopped = True
++
++	def destroy_node(self):
++		self._shutting_down = True
++		self.stop_motion(5)
++		return super().destroy_node()
+ 
+ 	def RGBLightcallback(self,msg):
+         # 流水灯控制，服务端回调函数 RGBLight control
+ 		if not isinstance(msg, Int32): return
++		if self._bus is None:
++			self._bus = smbus.SMBus(0)
+ 		# print ("RGBLight: ", msg.data)
+ 		if msg.data == 5:
+-			if self.RGBLight_ctrl == True: bus.write_byte_data(0x0d, 0x07, 0)
+-			else: bus.write_byte_data(0x0d, 0x07, 1)
++			if self.RGBLight_ctrl == True: self._bus.write_byte_data(0x0d, 0x07, 0)
++			else: self._bus.write_byte_data(0x0d, 0x07, 1)
+ 			self.RGBLight_ctrl = not self.RGBLight_ctrl
+-		else: bus.write_byte_data(0x0d, 0x04, msg.data)
++		else: self._bus.write_byte_data(0x0d, 0x04, msg.data)
+ 
+ 	def Buzzercallback(self,msg):
+ 		if not isinstance(msg, Bool): return
+@@ -151,8 +214,27 @@
+ 		self.magPublisher.publish(mag)
+ 		self.velPublisher.publish(twist)
+ 		
++def _raise_keyboard_interrupt(signum, frame):
++	raise KeyboardInterrupt
++
+ def main():
+-	rclpy.init() 
+-	driver = yahboomcar_driver('driver_node')
+-	rclpy.spin(driver)
++	lock_file = open('/tmp/yahboomcar-mcnamu-driver.lock', 'w')
++	try:
++		fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
++	except BlockingIOError:
++		print('Mcnamu_driver is already running')
++		return 1
++	signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
++	rclpy.init()
++	driver = None
++	try:
++		driver = yahboomcar_driver('driver_node')
++		rclpy.spin(driver)
++	except KeyboardInterrupt:
++		pass
++	finally:
++		if driver is not None:
++			driver.destroy_node()
++		if rclpy.ok():
++			rclpy.shutdown()
+ 		
+--- /dev/null
++++ b/test/test_motion_safety.py
+@@ -0,0 +1,119 @@
++import math
++
++import pytest
++
++from geometry_msgs.msg import Twist
++from yahboomcar_bringup import Mcnamu_driver
++from yahboomcar_bringup.Mcnamu_driver import (
++    command_is_stale,
++    sanitize_motion,
++    yahboomcar_driver,
++)
++
++
++def test_sanitize_motion_preserves_values_inside_limits():
++    assert sanitize_motion(0.1, -0.05, 0.2, 0.15, 0.1, 0.4) == (
++        0.1,
++        -0.05,
++        0.2,
++    )
++
++
++def test_sanitize_motion_clamps_each_axis():
++    assert sanitize_motion(1.0, -1.0, 2.0, 0.15, 0.1, 0.4) == (
++        0.15,
++        -0.1,
++        0.4,
++    )
++
++
++@pytest.mark.parametrize("invalid", [math.nan, math.inf, -math.inf])
++def test_sanitize_motion_rejects_non_finite_values(invalid):
++    with pytest.raises(ValueError):
++        sanitize_motion(invalid, 0.0, 0.0, 0.15, 0.1, 0.4)
++
++
++def test_command_is_stale_without_a_previous_command():
++    assert command_is_stale(None, now=10.0, timeout=0.25)
++
++
++def test_command_is_stale_at_timeout_boundary():
++    assert not command_is_stale(10.0, now=10.249, timeout=0.25)
++    assert command_is_stale(10.0, now=10.25, timeout=0.25)
++
++class FakeCar:
++    def __init__(self):
++        self.commands = []
++
++    def set_car_motion(self, vx, vy, angular):
++        self.commands.append((vx, vy, angular))
++
++
++class FakeLogger:
++    def __init__(self):
++        self.errors = []
++        self.warnings = []
++
++    def error(self, message):
++        self.errors.append(message)
++
++    def warning(self, message):
++        self.warnings.append(message)
++
++
++class FakeDriver:
++    stop_motion = yahboomcar_driver.stop_motion
++
++    def __init__(self):
++        self.car = FakeCar()
++        self.logger = FakeLogger()
++        self.xlinear_limit = 1.0
++        self.ylinear_limit = 1.0
++        self.angular_limit = 1.0
++        self.cmd_vel_timeout = 0.25
++        self._last_cmd_time = None
++        self._watchdog_stopped = True
++        self._shutting_down = False
++
++    def get_logger(self):
++        return self.logger
++
++
++def test_cmd_vel_callback_enforces_limits():
++    driver = FakeDriver()
++    message = Twist()
++    message.linear.x = 1.0
++    message.linear.y = -1.0
++    message.angular.z = 2.0
++
++    yahboomcar_driver.cmd_vel_callback(driver, message)
++
++    assert driver.car.commands == [(1.0, -1.0, 1.0)]
++    assert driver._last_cmd_time is not None
++    assert not driver._watchdog_stopped
++
++
++def test_cmd_vel_callback_stops_after_invalid_input():
++    driver = FakeDriver()
++    message = Twist()
++    message.linear.x = math.nan
++
++    yahboomcar_driver.cmd_vel_callback(driver, message)
++
++    assert driver.car.commands == [(0.0, 0.0, 0.0)] * 3
++    assert driver.logger.errors == ["rejected non-finite cmd_vel"]
++
++
++def test_watchdog_commands_zero_after_timeout(monkeypatch):
++    driver = FakeDriver()
++    driver._last_cmd_time = 10.0
++    driver._watchdog_stopped = False
++    monkeypatch.setattr(Mcnamu_driver.time, "monotonic", lambda: 10.25)
++
++    yahboomcar_driver.watchdog_callback(driver)
++
++    assert driver.car.commands == [(0.0, 0.0, 0.0)]
++    assert driver._watchdog_stopped
++    assert driver.logger.warnings == [
++        "cmd_vel timeout; commanding zero velocity"
++    ]

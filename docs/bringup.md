@@ -35,7 +35,7 @@ ssh -o IdentitiesOnly=yes \
 - 当前无业务 ROS 节点；仅 `/parameter_events` 与 `/rosout`
 - `yahboom_oled.service` 已启用，桌面同时运行厂商 OLED/管理程序
 
-完整接口和风险记录见 [实机平台基线](platform-baseline.md)。
+完整接口和风险记录见 [实机平台基线](platform-baseline.md)。厂商底盘驱动的本地安全修改、备份和回滚过程见 [底盘驱动安全补丁](vendor-driver-safety-patch.md)。
 
 ## 后续验证顺序
 
