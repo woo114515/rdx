@@ -108,7 +108,7 @@ ros2 topic pub --once /emergency_stop std_msgs/msg/Bool "{data: true}"
 ## 6. 故障排查
 
 - `/scan` 无数据：检查 MS200P 电源、串口权限和 `ros2 topic list`；确认厂商 launch 名称仍为 `ms200_scan.launch.py`。
-- 安全节点显示 `footprint_unverified`、`emergency_stop`、`scan_stale` 或 `command_stale`：这是预期的失效保护，先修复原因，不要绕过 `/cmd_vel`。
+- 安全节点显示 `footprint_unverified`、`emergency_stop`、`scan_timeout`、`scan_missing` 或 `command_timeout`：这是预期的失效保护，先修复原因，不要绕过 `/cmd_vel`。
 - Nav2 报地图不存在：`map:=` 必须指向机器人上实际存在的 `.yaml`，并能读取同目录图像文件。
 - 任务节点提示配置未就绪：检查 `mission.ready: true`、四个名称及顺序，且坐标均为有限数。
 - RViz 无法从 SSH 打开：在有桌面的开发机运行 RViz，并设置相同 `ROS_DOMAIN_ID`；SSH 只用于启动节点和查看话题。

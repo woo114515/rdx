@@ -52,6 +52,7 @@ bt_navigator:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_follow_path_action_bt_node
       - nav2_rate_controller_bt_node
+      - nav2_pipeline_sequence_bt_node
 
 bt_navigator_navigate_through_poses_rclcpp_node:
   ros__parameters:

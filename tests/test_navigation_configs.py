@@ -80,6 +80,7 @@ def test_navigation_launch_requires_map_and_routes_cmd_vel_nav():
     assert "/opt/ros/humble/share/rdx_navigation" not in (
         NAV2_CONFIG.read_text(encoding="utf-8")
     )
+    assert "nav2_pipeline_sequence_bt_node" in NAV2_CONFIG.read_text(encoding="utf-8")
 
 
 def test_default_waypoints_are_locked_until_real_poses_are_recorded():
