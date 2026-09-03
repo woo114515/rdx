@@ -1,0 +1,21 @@
+rdx_safety:
+  ros__parameters:
+    use_sim_time: false
+    publish_rate: 20.0
+    command_timeout: 0.25
+    scan_timeout: 0.30
+    max_linear_speed: 0.18
+    max_angular_speed: 0.60
+    stop_distance: 0.35
+    slow_distance: 0.60
+    sector_half_angle_degrees: 30.0
+    rotation_stop_distance: 0.35
+    footprint_verified: false
+    emergency_stop_on_start: true
+    nav_topic: /cmd_vel_nav
+    teleop_topic: /cmd_vel_teleop
+    scan_topic: /scan
+    emergency_stop_topic: /emergency_stop
+    output_topic: /cmd_vel
+    state_topic: /rdx_safety/state
+    ready_topic: /rdx_safety/ready

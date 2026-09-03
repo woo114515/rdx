@@ -1,0 +1,20 @@
+mission:
+  ready: false
+  frame_id: map
+  waypoints:
+    - name: task_1
+      x: 0.0
+      y: 0.0
+      yaw: 0.0
+    - name: task_2
+      x: 0.0
+      y: 0.0
+      yaw: 0.0
+    - name: task_3
+      x: 0.0
+      y: 0.0
+      yaw: 0.0
+    - name: start
+      x: 0.0
+      y: 0.0
+      yaw: 0.0
