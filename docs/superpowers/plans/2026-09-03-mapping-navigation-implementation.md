@@ -77,6 +77,11 @@ configured AMCL, DWB, both costmaps, and the custom behavior tree. Nav2 then wai
 publisher after the tests exited. The measured footprint and full hardware/motion validation remain
 pending.
 
+The follow-up sensor-only launch kept `start_driver:=false` and successfully opened `/dev/oradar`,
+connected the MS200P, received scan data, loaded the URDF including `lidar_link`, and reported both
+`emergency_stop` and unverified-footprint locks. The test ran in ROS domain 98 and released the lidar
+device afterward. Existing teammate processes in domain 99 were not modified.
+
 ---
 
 ## File Structure

@@ -43,6 +43,9 @@ task_3 → start` 执行的任务节点。尚未进行实车移动采图、实�
 2026-09-03 已把源码部署到小车 `/home/sunrise/rdx`，四个自有包在 TROS Humble 上构建
 成功。隔离 ROS 域内的无硬件测试已确认 SLAM Toolbox、现有测试地图、AMCL、DWB、
 costmap 和行为树能够加载；真实底盘、雷达数据和运动仍须按操作手册分阶段验证。
+随后在关闭底盘驱动的条件下验证了 `/dev/oradar` 连接、MS200P 扫描数据获取、
+`lidar_link` 模型链路，以及安全节点的急停和 footprint 双重锁定。底盘里程计和运动测试
+仍未执行。
 
 任务二的需求、技术路线、实测数据和验证门槛见
 [固定航点巡逻与动态避障设计](docs/superpowers/specs/2026-09-03-task-2-navigation-design.md)。
