@@ -1,0 +1,145 @@
+color_sorting:
+  ros__parameters:
+    # Safe default: perception runs, but all requested velocities remain zero.
+    motion_enabled: false
+
+    # Official mipi_cam publishes raw images. For the Yahboom compressed topic,
+    # set image_topic to /csi/image_raw/compressed and compressed_input to true.
+    image_topic: /image_raw
+    compressed_input: false
+    odom_topic: /odom_raw
+
+    # Keep odom mode until the task-2 map and AMCL are running. In map mode,
+    # set pose_source to amcl and zones_relative_to_origin to false, then enter
+    # each zone as an absolute coordinate in the map frame.
+    pose_source: odom
+    localization_pose_topic: /amcl_pose
+    zones_relative_to_origin: true
+    # Enable only after task 2 provides AMCL and a NavigateToPose server.
+    nav2_return_enabled: false
+    nav2_action_name: /navigate_to_pose
+    map_frame: map
+
+    # This intentionally does not publish to /cmd_vel. Connect it to the shared
+    # safety arbiter only after timeout and emergency-stop tests pass.
+    command_output_topic: /rdx_sorting/cmd_vel_request
+
+    control_rate: 10.0
+    image_timeout: 0.5
+    odom_timeout: 0.5
+
+    # Optional camera/lidar target ranging. Enable only after measuring the
+    # camera FOV, lidar zero angle, yaw offset and fork contact distance.
+    lidar_target_range_enabled: false
+    scan_topic: /scan
+    target_scan_timeout: 0.5
+    camera_horizontal_fov_degrees: 62.0
+    camera_lidar_yaw_offset_degrees: 0.0
+    target_range_half_angle_degrees: 3.0
+    target_range_minimum_samples: 3
+
+    roi_top_ratio: 0.25
+    minimum_area_ratio: 0.001
+    maximum_area_ratio: 0.35
+
+    # Upright-target shape filter. Ratio is bounding-box width / height.
+    minimum_width_height_ratio: 0.25
+    maximum_width_height_ratio: 0.90
+    minimum_extent: 0.55
+    minimum_solidity: 0.88
+
+    # Independent upright-bottle filter. The cuboid limits above are unchanged.
+    # Neck/body is median contour width at the top divided by body width.
+    bottle_detection_enabled: true
+    bottle_minimum_width_height_ratio: 0.15
+    bottle_maximum_width_height_ratio: 0.65
+    bottle_minimum_extent: 0.35
+    bottle_minimum_solidity: 0.75
+    bottle_maximum_neck_body_width_ratio: 0.78
+
+    color_order: [green, blue, orange]
+    targets_per_color.green: 2
+    targets_per_color.blue: 2
+    targets_per_color.orange: 2
+
+    # Zone centers in metres, relative to the robot pose when odometry first
+    # becomes available: x is forward and y is left.
+    zones.green.x: 1.2
+    zones.green.y: 0.8
+    zones.blue.x: 1.2
+    zones.blue.y: 0.0
+    zones.orange.x: 1.2
+    zones.orange.y: -0.8
+
+    # OpenCV HSV ranges; tune these using images from the actual floor lighting.
+    hsv.green.lower: [35, 80, 60]
+    hsv.green.upper: [85, 255, 255]
+    hsv.blue.lower: [90, 80, 50]
+    hsv.blue.upper: [135, 255, 255]
+    # The IMX219 renders the orange block red under the current lighting.
+    hsv.orange.lower: [0, 80, 60]
+    hsv.orange.upper: [25, 255, 255]
+
+    search_angular_speed: 0.18
+    # One turn takes about 35 s at this speed. By default, reaching 40 s starts
+    # another scan cycle instead of entering a fault.
+    maximum_search_duration: 40.0
+    search_timeout_is_fault: false
+    # Set above zero to finish normally after no target is seen for this long.
+    finish_when_no_target_duration: 0.0
+    minimum_detection_duration: 0.25
+    align_kp: 0.45
+    max_align_speed: 0.25
+    align_tolerance: 0.08
+    approach_speed: 0.08
+    minimum_approach_speed: 0.03
+    approach_range_kp: 0.40
+    contact_distance: 0.24
+    contact_area_ratio: 0.12
+    target_lost_timeout: 0.6
+    push_speed: 0.08
+    maximum_push_duration: 20.0
+    # Set above zero only after confirming the target remains visible up close.
+    push_target_lost_timeout: 0.0
+    push_kp: 0.7
+    yaw_kp: 0.8
+    max_yaw_speed: 0.20
+    zone_tolerance: 0.12
+    release_speed: 0.06
+    release_duration: 1.0
+    # Set timeout above zero to require visual confirmation after release.
+    delivery_confirmation_timeout: 0.0
+    delivery_confirmation_duration: 0.25
+    delivery_maximum_area_ratio: 0.15
+    delivery_maximum_area_scale: 0.85
+    delivery_maximum_x_error: 0.35
+    return_speed: 0.10
+    return_kp: 0.7
+    return_tolerance: 0.12
+    return_corridor_offset: 0.80
+    return_corridor_margin: 0.25
+    maximum_return_duration: 35.0
+
+rdx_sorting_safety:
+  ros__parameters:
+    # Disabled by default so this package cannot compete with another controller.
+    output_enabled: false
+    request_topic: /rdx_sorting/cmd_vel_request
+    # Task-2 Nav2 must remap its /cmd_vel output to this private topic.
+    navigation_request_enabled: false
+    navigation_request_topic: /rdx_sorting/nav_cmd_vel_request
+    output_topic: /cmd_vel
+    stop_on_output_conflict: true
+    # Keep disabled until /scan orientation and ranges are verified on the robot.
+    lidar_stop_enabled: false
+    scan_topic: /scan
+    scan_timeout: 0.5
+    obstacle_stop_distance: 0.30
+    movement_half_angle_degrees: 35.0
+    target_corridor_half_angle_degrees: 15.0
+    sorting_status_topic: /rdx_sorting/status
+    emergency_stop_topic: /rdx_sorting/emergency_stop
+    publish_rate: 20.0
+    request_timeout: 0.3
+    maximum_linear_speed: 0.12
+    maximum_angular_speed: 0.25

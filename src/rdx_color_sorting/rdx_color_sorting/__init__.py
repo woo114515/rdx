@@ -1,0 +1,1 @@
+"""Three-color sorting demo."""

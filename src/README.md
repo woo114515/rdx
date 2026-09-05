@@ -1,5 +1,8 @@
 # Source Packages
 
-ROS 发行版与厂商驱动接口确认后，在此创建工作空间功能包。计划按职责拆分为 bringup、base control、navigation、perception 和 sorting，并统一使用 `rdx_` 包名前缀。
+本目录保存项目 ROS 2 功能包，并统一使用 `rdx_` 包名前缀。
+
+- `rdx_color_sorting`：任务三三色识别、瓶形过滤、分类推动状态机和专用安全仲裁，是当前任务三实现。
+- `rdx_bringup`、`rdx_navigation`、`rdx_mission`、`rdx_safety`：早期自研任务二方案，暂时保留作历史参考；比赛任务二改用小车厂家导航，默认流程不启动这些包。
 
 不要复制完整厂商工作空间。优先把厂商驱动作为已安装依赖；必须修补上游代码时，记录来源、版本、许可证和修改原因。

@@ -17,7 +17,7 @@
 
 1. **基本控制**：以低速 8 字轨迹证明底盘运动控制可用，轨迹尺寸与速度可配置。
 2. **SLAM 与导航**：使用 MS200P 建图、保存和加载地图，按固定顺序访问任务点 1、2、3 并返回起点；巡逻中应绕开固定障碍和移动人员。
-3. **柱体分类推动**：自主搜索易拉罐大小的彩色柱体，将暖色和冷色柱体整理为两堆。该任务位于独立场地，不复用导航 Demo 的地图。
+3. **柱体分类推动**：使用 IMX219 自主搜索绿色、蓝色和橙色瓶状目标，并将三种颜色分别推向可配置区域。该任务位于独立场地，默认不复用导航 Demo 的地图。
 
 三个 Demo 分别启动和验收。Python 是首选语言，仅在性能或底层接口需要时使用 C++。
 
@@ -34,10 +34,9 @@ tests/       脱离硬件运行的自动化测试
 
 ## 当前阶段
 
-SSH、底盘数据链和 MS200P 静态 SLAM 冒烟测试已完成。仓库现在包含速度安全仲裁、最小
-硬件 bringup、SLAM Toolbox 建图启动、静态地图 Nav2 配置，以及按 `task_1 → task_2 →
-task_3 → start` 执行的任务节点。尚未进行实车移动采图、实测 footprint 和航点录入；默认
-航点仍为 `ready: false`。现场操作顺序见
+SSH、底盘数据链和 MS200P 静态 SLAM 冒烟测试已完成。比赛导航采用小车厂家自带导航
+方案，仓库内原有的 `rdx_navigation`、`rdx_mission` 和 `rdx_safety` 暂时保留作历史参考，
+不再作为比赛默认运行链路。比赛地图保存在 `src/rdx_navigation/maps/`，现场操作记录见
 [建图与导航操作手册](docs/mapping-navigation-guide.md)。
 
 2026-09-03 已把源码部署到小车 `/home/sunrise/rdx`，四个自有包在 TROS Humble 上构建
@@ -52,8 +51,14 @@ costmap 和行为树能够加载；真实底盘、雷达数据和运动仍须按
 恢复上电前必须先排查供电告警。详见
 [MS200P 与 RViz 现场测试记录](docs/field-test-2026-09-03-lidar-rviz.md)。
 
-任务二的需求、技术路线、实测数据和验证门槛见
-[固定航点巡逻与动态避障设计](docs/superpowers/specs/2026-09-03-task-2-navigation-design.md)。
+任务三已导入队友开发的 `rdx_color_sorting` 包，包括 HSV 三色识别、瓶形过滤、目标测距、
+`SEARCH → ALIGN → APPROACH → PUSH → RELEASE → RETURN` 状态机和任务三专用安全仲裁。
+纯 Python 测试能够脱离机器人运行；相机链路、现场 HSV、外参和真实推瓶仍需实车标定。
+使用方法见 [三色目标分类推动](docs/color-sorting.md)。
+
+任务二原自研方案的需求和实验记录仍保留在
+[固定航点巡逻与动态避障设计](docs/superpowers/specs/2026-09-03-task-2-navigation-design.md)，
+但不代表当前比赛启动方案。
 
 只读检查可从本机运行：
 
