@@ -1,0 +1,29 @@
+color_object_detector:
+  ros__parameters:
+    image_topic: /csi/image_raw/compressed
+    detections_topic: /color_sorter/detections
+    debug_topic: /color_sorter/debug/compressed
+    health_topic: /color_sorter/perception_health
+    image_timeout: 0.5
+    debug_fps: 5.0
+    debug_jpeg_quality: 65
+    roi_top_ratio: 0.10
+    morphology_kernel_size: 5
+    minimum_area_ratio: 0.001
+    maximum_area_ratio: 0.35
+    minimum_aspect_ratio: 0.15
+    maximum_aspect_ratio: 1.10
+    minimum_extent: 0.40
+    minimum_solidity: 0.75
+    tracker_maximum_distance: 0.25
+    tracker_maximum_missed: 3
+    colors: [blue, green, pink]
+    hsv.blue.range_count: 1
+    hsv.blue.lower_1: [88, 180, 60]
+    hsv.blue.upper_1: [100, 255, 255]
+    hsv.green.range_count: 1
+    hsv.green.lower_1: [40, 22, 70]
+    hsv.green.upper_1: [80, 90, 230]
+    hsv.pink.range_count: 1
+    hsv.pink.lower_1: [155, 100, 60]
+    hsv.pink.upper_1: [175, 230, 240]

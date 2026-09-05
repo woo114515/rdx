@@ -1,0 +1,11 @@
+std_msgs/Header header
+uint32 track_id
+string color
+string shape
+float32 confidence
+sensor_msgs/RegionOfInterest roi
+float32 center_x
+float32 center_y
+float32 normalized_x
+float32 normalized_y
+float32 area_ratio
