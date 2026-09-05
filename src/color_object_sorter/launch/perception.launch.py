@@ -20,5 +20,19 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[LaunchConfiguration("config")],
             ),
+            Node(
+                package="color_object_sorter",
+                executable="color_lidar_fusion",
+                name="color_lidar_fusion",
+                output="screen",
+                parameters=[LaunchConfiguration("config")],
+            ),
+            Node(
+                package="color_object_sorter",
+                executable="temporal_object_confirmation",
+                name="temporal_object_confirmation",
+                output="screen",
+                parameters=[LaunchConfiguration("config")],
+            ),
         ]
     )

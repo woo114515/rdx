@@ -108,11 +108,11 @@ class ColorObjectDetectorNode(Node):
             "hsv.blue.lower_1": [88, 180, 60],
             "hsv.blue.upper_1": [100, 255, 255],
             "hsv.green.range_count": 1,
-            "hsv.green.lower_1": [40, 22, 70],
-            "hsv.green.upper_1": [80, 90, 230],
+            "hsv.green.lower_1": [45, 30, 110],
+            "hsv.green.upper_1": [78, 80, 240],
             "hsv.pink.range_count": 1,
-            "hsv.pink.lower_1": [155, 100, 60],
-            "hsv.pink.upper_1": [175, 230, 240],
+            "hsv.pink.lower_1": [152, 120, 140],
+            "hsv.pink.upper_1": [168, 220, 255],
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)

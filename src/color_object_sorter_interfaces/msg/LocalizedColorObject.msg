@@ -1,0 +1,9 @@
+std_msgs/Header header
+uint32 track_id
+string color
+string shape
+float32 confidence
+float32 normalized_x
+float32 bearing
+float32 distance
+bool matched

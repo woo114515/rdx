@@ -1,0 +1,14 @@
+std_msgs/Header header
+uint32 track_id
+string color
+string shape
+float32 confidence
+float32 bearing
+float32 distance
+uint32 observation_count
+float32 detection_rate
+float32 color_consistency
+float32 lidar_match_rate
+float32 bearing_stddev
+float32 distance_stddev
+bool confirmed

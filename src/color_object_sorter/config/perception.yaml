@@ -22,8 +22,36 @@ color_object_detector:
     hsv.blue.lower_1: [88, 180, 60]
     hsv.blue.upper_1: [100, 255, 255]
     hsv.green.range_count: 1
-    hsv.green.lower_1: [40, 22, 70]
-    hsv.green.upper_1: [80, 90, 230]
+    hsv.green.lower_1: [45, 30, 110]
+    hsv.green.upper_1: [78, 80, 240]
     hsv.pink.range_count: 1
-    hsv.pink.lower_1: [155, 100, 60]
-    hsv.pink.upper_1: [175, 230, 240]
+    hsv.pink.lower_1: [152, 120, 140]
+    hsv.pink.upper_1: [168, 220, 255]
+
+color_lidar_fusion:
+  ros__parameters:
+    detections_topic: /color_sorter/detections
+    scan_topic: /scan
+    output_topic: /color_sorter/localized_objects
+    # Static two-point calibration from the 2026-09-06 stationary test.
+    center_normalized_x: -0.069
+    radians_per_normalized_x: -0.3926990817
+    association_half_window: 0.0698131701
+    maximum_scan_age: 0.25
+    maximum_range_jump: 0.15
+    minimum_cluster_points: 2
+
+temporal_object_confirmation:
+  ros__parameters:
+    input_topic: /color_sorter/localized_objects
+    output_topic: /color_sorter/confirmed_objects
+    status_topic: /color_sorter/confirmation_status
+    window_seconds: 1.0
+    minimum_observations: 6
+    minimum_detection_rate: 0.6
+    minimum_color_consistency: 0.8
+    minimum_lidar_match_rate: 0.5
+    maximum_bearing_stddev: 0.0523598776
+    maximum_distance_stddev: 0.10
+    association_bearing: 0.1047197551
+    association_distance: 0.30
