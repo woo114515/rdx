@@ -103,7 +103,7 @@ class SafetyNode(Node):
             "teleop_topic": "/cmd_vel_teleop",
             "scan_topic": "/scan",
             "emergency_stop_topic": "/emergency_stop",
-            "output_topic": "/cmd_vel",
+            "output_topic": "/cmd_vel_safe",
             "state_topic": "/rdx_safety/state",
             "ready_topic": "/rdx_safety/ready",
         }

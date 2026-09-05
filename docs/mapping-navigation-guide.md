@@ -6,9 +6,11 @@
 
 1. 给电池充足电，清空场地并安排一名操作员随时可断电。
 2. 若上电后出现持续蜂鸣，先断电检查电池、供电和硬件告警，不得继续启动 ROS 或运动测试。
-3. 测量车体和固定叉形结构从 `base_footprint` 中心到最远点的距离。把实测值加至少 0.05 m，分别写入 `config/nav2.yaml` 的 local/global costmap `robot_radius`；未测量前严禁解锁运动。
-4. 建图和导航都先使用 `emergency_stop_on_start:=true`。急停解除前确认车轮架空或周围无人。
-5. 检查 `df -h /`。2026-09-03 实机根分区使用率为 92%，录制 rosbag 或反复建图前应预留空间。
+3. 已于 2026-09-04 确认导航安全外形前后长 0.30 m、左右宽 0.20 m（尺寸已经包含安全距离），雷达位于平面中心。local/global costmap 使用最终矩形 `footprint`（x=±0.15 m、y=±0.10 m），`footprint_padding` 为 0，不再重复增加安全距离。结构变化后必须重新测量。
+4. 为降低旋转时的雷达点云错位，导航和 Spin 恢复的最大角速度暂定为 0.20 rad/s；自动 Spin 恢复功能保持启用。
+5. 2026-09-04 的低速正反转录包显示，轮式里程计与 IMU 角速度积分基本一致，但 Madgwick 绝对 yaw 在旋转时几乎不变，导致 EKF 航向严重抵消。实机 `/opt/ros/humble/share/robot_localization/params/ekf_yahboom.yaml` 已停止融合 IMU yaw，仅保留 `angular_velocity.z`；原文件备份为同目录下的 `ekf_yahboom.yaml.vendor-backup-20260904-before-disable-imu-yaw`。更改后必须用相同正反 90°流程重新录包对照，不能直接恢复自动导航。
+6. 建图和导航都先使用 `emergency_stop_on_start:=true`。急停解除前确认车轮架空或周围无人。
+7. 检查 `df -h /`。2026-09-03 实机根分区使用率为 92%，录制 rosbag 或反复建图前应预留空间。
 
 ## 1. 连接与部署
 
@@ -47,7 +49,7 @@ ros2 run tf2_ros tf2_echo odom base_footprint
 ros2 topic pub --rate 2 /emergency_stop std_msgs/msg/Bool "{data: false}"
 ```
 
-验证无指令和断开遥控后 `/cmd_vel` 回到零；再发布 `true`，确认立即停车。测试结束按 `Ctrl-C`。只有完成真实尺寸测量并更新参数后，才把 `footprint_verified:=true` 用于运动。
+验证无指令和断开遥控后 `/cmd_vel_safe` 回到零；再发布 `true`，确认立即停车。测试结束按 `Ctrl-C`。只有完成真实尺寸测量并更新参数后，才把 `footprint_verified:=true` 用于运动。
 
 ## 3. 低速建图
 
@@ -111,7 +113,7 @@ ros2 topic pub --once /emergency_stop std_msgs/msg/Bool "{data: true}"
 ## 6. 故障排查
 
 - `/scan` 无数据：检查 MS200P 电源、`/dev/oradar` 权限和 `ros2 topic list`；确认已经加载 `~/software/library_ws/install/setup.bash`。项目的 hardware launch 会在驱动异常退出 2 秒后自动重启；保持该 launch 运行，不要另开第二个雷达实例争用串口。若它持续反复退出，应停止测试并检查 USB、供电和厂商驱动日志。
-- 安全节点显示 `footprint_unverified`、`emergency_stop`、`scan_timeout`、`scan_missing` 或 `command_timeout`：这是预期的失效保护，先修复原因，不要绕过 `/cmd_vel`。
+- 安全节点显示 `footprint_unverified`、`emergency_stop`、`scan_timeout`、`scan_missing` 或 `command_timeout`：这是预期的失效保护，先修复原因，不要绕过 `/cmd_vel_safe`。
 - Nav2 报地图不存在：`map:=` 必须指向机器人上实际存在的 `.yaml`，并能读取同目录图像文件。
 - 任务节点提示配置未就绪：检查 `mission.ready: true`、四个名称及顺序，且坐标均为有限数。
 - RViz 无法从 SSH 打开：在有桌面的开发机运行 RViz，并设置相同 `ROS_DOMAIN_ID`；SSH 只用于启动节点和查看话题。

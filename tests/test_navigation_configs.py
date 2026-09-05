@@ -51,11 +51,15 @@ def test_nav2_is_real_robot_and_routes_velocity_through_safety():
         if isinstance(node, dict)
         for value in [node.get("ros__parameters", {}).get("use_sim_time", False)]
     )
-    assert data["bt_navigator"]["ros__parameters"]["odom_topic"] == "/odom_raw"
+    assert data["bt_navigator"]["ros__parameters"]["odom_topic"] == "/odom"
     follow = data["controller_server"]["ros__parameters"]["FollowPath"]
     assert follow["max_vel_x"] <= 0.18
     assert follow["max_vel_y"] <= 0.18
-    assert follow["max_vel_theta"] <= 0.60
+    assert follow["max_vel_theta"] <= 0.20
+    assert follow["min_vel_y"] == 0.0
+    assert follow["max_vel_y"] == 0.0
+    assert follow["min_speed_xy"] == 0.0
+    assert follow["trans_stopped_velocity"] <= 0.05
 
 
 def test_costmaps_use_scan_and_conservative_clearance():
@@ -63,8 +67,8 @@ def test_costmaps_use_scan_and_conservative_clearance():
     local = data["local_costmap"]["local_costmap"]["ros__parameters"]
     global_ = data["global_costmap"]["global_costmap"]["ros__parameters"]
 
-    assert local["inflation_layer"]["inflation_radius"] >= 0.55
-    assert global_["inflation_layer"]["inflation_radius"] >= 0.55
+    assert local["inflation_layer"]["inflation_radius"] == 0.15
+    assert global_["inflation_layer"]["inflation_radius"] == 0.15
     assert local["obstacle_layer"]["scan"]["topic"] == "/scan"
     assert global_["obstacle_layer"]["scan"]["topic"] == "/scan"
 
@@ -94,3 +98,15 @@ def test_default_waypoints_are_locked_until_real_poses_are_recorded():
         "task_3",
         "start",
     ]
+
+
+def test_costmaps_use_measured_rectangular_footprint():
+    data = yaml.safe_load(NAV2_CONFIG.read_text(encoding="utf-8"))
+    local = data["local_costmap"]["local_costmap"]["ros__parameters"]
+    global_ = data["global_costmap"]["global_costmap"]["ros__parameters"]
+    expected = "[[0.15, 0.10], [0.15, -0.10], [-0.15, -0.10], [-0.15, 0.10]]"
+
+    for costmap in (local, global_):
+        assert costmap["footprint"] == expected
+        assert costmap["footprint_padding"] == 0.0
+        assert "robot_radius" not in costmap

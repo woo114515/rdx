@@ -20,7 +20,7 @@ def test_safety_configuration_fails_closed():
     assert params["scan_timeout"] <= 0.30
     assert params["max_linear_speed"] <= 0.18
     assert params["max_angular_speed"] <= 0.60
-    assert params["output_topic"] == "/cmd_vel"
+    assert params["output_topic"] == "/cmd_vel_safe"
     assert params["nav_topic"] == "/cmd_vel_nav"
     assert params["teleop_topic"] == "/cmd_vel_teleop"
 
@@ -40,6 +40,7 @@ def test_hardware_launch_is_minimal_and_has_no_teleop_source():
     assert "joy" not in source.lower()
     assert "keyboard" not in source.lower()
     assert 'remappings=[("scan", "/scan")]' in source
+    assert '"motion_command_topic": "/cmd_vel_safe"' in source
 
 
 def test_bringup_declares_the_robot_installed_lidar_package():
