@@ -116,3 +116,20 @@ whether this is center-to-center distance or clear edge-to-edge distance. The
 that definition, cylinder diameter, localization error, and swept footprint
 have been measured. The larger spacing helps perception but does not remove
 the one-to-one association and occlusion requirements above.
+
+## Dense-field association correction (2026-09-06)
+
+A stationary six-cylinder test produced all six correct vision detections but
+only five map landmarks. A 15-second live probe evaluated 100 frames and
+observed 94 ambiguous events. It captured two concrete causes:
+
+- valid cylinder returns around 1.5 m competed with wall/background fragments
+  around 3.4--11.9 m because the old candidate logic used bearing alone;
+- two nearby visual detections sometimes competed for one range-contiguous
+  cluster because adjacent samples with similar ranges were always joined.
+
+Fusion now keeps only candidates within `maximum_depth_gap` of the nearest
+surface in each visual window. It also divides a continuous return wider than
+`maximum_cluster_angular_span` before global allocation. Defaults are 0.35 m
+and 4 degrees. These filters run before the existing one-to-one and ambiguity
+checks; they do not force uncertain matches or weaken rejection thresholds.

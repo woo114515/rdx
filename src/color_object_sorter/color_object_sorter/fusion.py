@@ -51,12 +51,17 @@ def extract_scan_clusters(
     range_max: float,
     maximum_range_jump: float,
     minimum_cluster_points: int,
+    maximum_angular_span: float = math.inf,
 ) -> tuple[LaserCluster, ...]:
     """Extract range-contiguous clusters from a circular laser scan."""
 
     if angle_increment <= 0.0:
         raise ValueError("scan angle increment must be positive")
-    if maximum_range_jump < 0.0 or minimum_cluster_points < 1:
+    if (
+        maximum_range_jump < 0.0
+        or minimum_cluster_points < 1
+        or maximum_angular_span <= 0.0
+    ):
         raise ValueError("invalid cluster parameters")
 
     groups: list[list[tuple[int, float, float]]] = []
@@ -88,16 +93,25 @@ def extract_scan_clusters(
         groups.pop()
 
     result = []
-    for group in groups:
-        if len(group) < minimum_cluster_points:
-            continue
-        result.append(
-            LaserCluster(
-                bearing=_circular_mean([sample[1] for sample in group]),
-                distance=_median([sample[2] for sample in group]),
-                point_count=len(group),
-            )
+    for original_group in groups:
+        split_count = max(
+            1,
+            math.ceil(
+                _group_angular_span(original_group) / maximum_angular_span
+            ),
         )
+        chunk_size = math.ceil(len(original_group) / split_count)
+        for offset in range(0, len(original_group), chunk_size):
+            group = original_group[offset : offset + chunk_size]
+            if len(group) < minimum_cluster_points:
+                continue
+            result.append(
+                LaserCluster(
+                    bearing=_circular_mean([sample[1] for sample in group]),
+                    distance=_median([sample[2] for sample in group]),
+                    point_count=len(group),
+                )
+            )
     return tuple(result)
 
 
@@ -106,12 +120,17 @@ def associate_one_to_one(
     half_windows: Sequence[float],
     clusters: Sequence[LaserCluster],
     ambiguity_margin: float,
+    maximum_depth_gap: float = math.inf,
 ) -> tuple[Association, ...]:
     """Globally allocate clusters, rejecting close alternatives as ambiguous."""
 
     if len(predicted_bearings) != len(half_windows):
         raise ValueError("each detection needs an association window")
-    if ambiguity_margin < 0.0 or any(window <= 0.0 for window in half_windows):
+    if (
+        ambiguity_margin < 0.0
+        or maximum_depth_gap < 0.0
+        or any(window <= 0.0 for window in half_windows)
+    ):
         raise ValueError("invalid association limits")
 
     candidates: list[tuple[tuple[int, float], ...]] = []
@@ -121,6 +140,14 @@ def associate_one_to_one(
             error = abs(_angle_difference(cluster.bearing, bearing))
             if error <= window:
                 items.append((index, error))
+        if items:
+            nearest_depth = min(clusters[index].distance for index, _ in items)
+            items = [
+                item
+                for item in items
+                if clusters[item[0]].distance
+                <= nearest_depth + maximum_depth_gap
+            ]
         candidates.append(tuple(sorted(items, key=lambda item: (item[1], item[0]))))
 
     @lru_cache(maxsize=None)
@@ -231,3 +258,9 @@ def _median(values: Sequence[float]) -> float:
     if len(ordered) % 2:
         return ordered[middle]
     return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _group_angular_span(group: Sequence[tuple[int, float, float]]) -> float:
+    if len(group) < 2:
+        return 0.0
+    return abs(_angle_difference(group[-1][1], group[0][1]))

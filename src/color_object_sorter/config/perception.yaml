@@ -44,6 +44,11 @@ color_lidar_fusion:
     maximum_scan_age: 0.25
     maximum_range_jump: 0.15
     minimum_cluster_points: 2
+    # A single 7 cm cylinder spans roughly 2.7 degrees at 1.5 m. Wider
+    # contiguous returns are split so adjacent cylinders cannot become one.
+    maximum_cluster_angular_span: 0.0698131701
+    # Ignore walls and other returns far behind the nearest visible surface.
+    maximum_depth_gap: 0.35
 
 temporal_object_confirmation:
   ros__parameters:
