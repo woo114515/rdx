@@ -24,6 +24,7 @@ setup(
     entry_points={
         "console_scripts": [
             "color_object_detector = color_object_sorter.detector_node:main",
+            "color_sorter_debug_viewer = color_object_sorter.debug_viewer_node:main",
             "color_lidar_fusion = color_object_sorter.fusion_node:main",
             "temporal_object_confirmation = color_object_sorter.confirmation_node:main",
             "hsv_sampler = color_object_sorter.hsv_sampler_node:main",

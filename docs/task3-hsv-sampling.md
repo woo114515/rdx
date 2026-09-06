@@ -30,3 +30,16 @@ can be separated from common false positives.
 The output uses OpenCV HSV units: hue 0-179 and saturation/value 0-255. Runtime
 CSV data belongs in an operator data directory and must not be committed by
 default.
+
+## View detector output
+
+With the camera and `color_object_detector` running, open the annotated stream
+in the graphical VM with:
+
+```bash
+ros2 run color_object_sorter color_sorter_debug_viewer
+```
+
+The viewer uses BEST_EFFORT sensor-data QoS for the compressed debug topic and
+does not depend on the VM's conflicting `rqt_image_view` compressed transport
+plugin. Press `q` or Escape to close it.

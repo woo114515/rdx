@@ -38,6 +38,19 @@ visual detection, while same-color overlap can merge into one image contour.
 These cases must not trigger motion; see the Task 3 fusion document for the
 required one-to-one association follow-up.
 
+## Detection viewer
+
+Run the repository-provided viewer in a graphical ROS environment:
+
+```bash
+ros2 run color_object_sorter color_sorter_debug_viewer
+```
+
+It subscribes to `/color_sorter/debug/compressed` with sensor-data QoS, avoiding
+the `rqt_image_view` compressed-transport plugin conflict seen in the supplied
+VM. Press `q` or Escape in the window to exit. The viewer has no publishers and
+cannot command robot motion.
+
 ## HSV sampling
 
 The interactive sampler records labelled pixel patches from the same compressed
