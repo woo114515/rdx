@@ -1,0 +1,8 @@
+std_msgs/Header header
+MappedCylinder[] objects
+geometry_msgs/Point current_envelope_center
+float32 current_envelope_radius
+bool current_envelope_valid
+geometry_msgs/Point initial_envelope_center
+float32 initial_envelope_radius
+bool initial_envelope_locked

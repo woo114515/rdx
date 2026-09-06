@@ -1,0 +1,11 @@
+cylinder_field_mapper:
+  ros__parameters:
+    input_topic: /color_sorter/confirmed_objects
+    output_topic: /cylinder_field/objects
+    map_frame: map
+    association_distance: 0.15
+    history_size: 25
+    minimum_observations: 3
+    minimum_lock_objects: 6
+    cylinder_radius: 0.035
+    transform_timeout: 0.15
