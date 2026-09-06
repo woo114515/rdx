@@ -1,0 +1,12 @@
+std_msgs/Header header
+uint32 candidate_id
+geometry_msgs/Point position
+float32 radius
+float32 position_confidence
+string color
+float32 color_confidence
+string[] color_names
+float32[] color_scores
+uint32 visible_observations
+uint32 color_observations
+string state

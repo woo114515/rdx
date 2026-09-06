@@ -28,6 +28,8 @@ setup(
             "color_lidar_fusion = color_object_sorter.fusion_node:main",
             "temporal_object_confirmation = color_object_sorter.confirmation_node:main",
             "hsv_sampler = color_object_sorter.hsv_sampler_node:main",
+            "hsv_analyzer = color_object_sorter.hsv_analyzer:main",
+            "candidate_validator = color_object_sorter.candidate_validation_node:main",
         ],
     },
 )

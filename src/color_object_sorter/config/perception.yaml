@@ -19,16 +19,16 @@ color_object_detector:
     tracker_maximum_missed: 3
     colors: [blue, green, red]
     hsv.blue.range_count: 1
-    hsv.blue.lower_1: [88, 180, 60]
-    hsv.blue.upper_1: [100, 255, 255]
+    hsv.blue.lower_1: [93, 220, 100]
+    hsv.blue.upper_1: [104, 255, 255]
     hsv.green.range_count: 1
-    hsv.green.lower_1: [63, 75, 95]
-    hsv.green.upper_1: [78, 140, 170]
+    hsv.green.lower_1: [54, 40, 85]
+    hsv.green.upper_1: [75, 120, 200]
     hsv.red.range_count: 2
-    hsv.red.lower_1: [0, 205, 100]
-    hsv.red.upper_1: [6, 255, 190]
-    hsv.red.lower_2: [168, 205, 100]
-    hsv.red.upper_2: [179, 255, 190]
+    hsv.red.lower_1: [0, 155, 90]
+    hsv.red.upper_1: [4, 255, 195]
+    hsv.red.lower_2: [170, 155, 90]
+    hsv.red.upper_2: [179, 255, 195]
 
 color_lidar_fusion:
   ros__parameters:
@@ -59,3 +59,25 @@ temporal_object_confirmation:
     maximum_distance_stddev: 0.10
     association_bearing: 0.1047197551
     association_distance: 0.30
+
+cylinder_candidate_validator:
+  ros__parameters:
+    candidates_topic: /cylinder_snapshot/candidates
+    detections_topic: /color_sorter/detections
+    output_topic: /cylinder_snapshot/validated_objects
+    marker_topic: /cylinder_snapshot/validation_markers
+    projection_frame: lidar_link
+    center_normalized_x: -0.069
+    radians_per_normalized_x: -0.3926990817
+    minimum_normalized_window: 0.08
+    normalized_window_padding: 0.03
+    # The two-point linear camera/LiDAR projection loses accuracy near image
+    # edges. Keep the central window narrow and use 0.14 beyond |x|=0.75.
+    edge_window_start: 0.75
+    maximum_edge_normalized_window: 0.14
+    visual_ambiguity_margin: 0.04
+    edge_margin: 0.08
+    minimum_color_observations: 5
+    minimum_visible_observations: 8
+    minimum_color_confidence: 0.65
+    transform_timeout: 0.15

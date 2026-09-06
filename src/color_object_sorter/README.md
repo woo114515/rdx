@@ -6,6 +6,13 @@ replacement-green and red were recalibrated, deployed, and visually reviewed
 without obvious misclassification in the tested scene on 2026-09-06. This
 package has no velocity publisher and cannot move the robot.
 
+The configured color names are not fixed in the detector algorithm. To add a
+new color, append its name to `colors` in `config/perception.yaml`, then add
+`hsv.<name>.range_count` and the corresponding `lower_N`/`upper_N` entries.
+Unknown names are declared from YAML at startup; no Python source edit is
+required. The task inventory and per-color quantities are maintained separately
+in `cylinder_field_mapping/config/snapshot.yaml`.
+
 It subscribes to `/csi/image_raw/compressed` using sensor-data QoS and publishes
 `/color_sorter/detections`, `/color_sorter/debug/compressed`, and
 `/color_sorter/perception_health`. HSV values were calibrated from labelled
@@ -32,6 +39,15 @@ standard deviation at most 0.10 m. Spatial reassociation allows a camera
 All candidates and their metrics are published on
 `/color_sorter/confirmation_status` for threshold diagnosis; consumers that
 can cause motion must use only `/color_sorter/confirmed_objects`.
+
+The newer LiDAR-first path uses `candidate_validator`. It consumes spatial
+candidates from `/cylinder_snapshot/candidates` and image detections, then
+publishes `/cylinder_snapshot/validated_objects` plus RViz markers on
+`/cylinder_snapshot/validation_markers`. Candidates outside the image remain
+`unobserved`; only repeatedly visible candidates without configured color
+evidence become `rejected`. Lock a complete validated inventory with
+`/cylinder_validation/lock`, or clear all accumulated evidence with
+`/cylinder_validation/reset`.
 
 Fusion now extracts LiDAR clusters once per scan and assigns them globally, so
 one cluster cannot be reused by two visual detections. Competing detections and

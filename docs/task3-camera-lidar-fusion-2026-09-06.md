@@ -116,3 +116,12 @@ whether this is center-to-center distance or clear edge-to-edge distance. The
 that definition, cylinder diameter, localization error, and swept footprint
 have been measured. The larger spacing helps perception but does not remove
 the one-to-one association and occlusion requirements above.
+# Edge-aware visual association
+
+Field testing on 2026-09-07 found that a right-edge red cylinder was detected
+at normalized image x=0.877 with confidence 0.791, while the linear LiDAR
+projection predicted x=0.748. The 0.129 error exceeded the former fixed 0.08
+association window. The window now remains 0.08 through the central 75% of the
+normalized image coordinate and switches to 0.14 near either edge.
+One-to-one assignment and ambiguity rejection remain active, so widening the
+edge tolerance does not permit one visual detection to validate two candidates.

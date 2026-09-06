@@ -17,6 +17,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LocalizedColorObjectArray.msg"
   "msg/MappedCylinder.msg"
   "msg/CylinderField.msg"
+  "msg/CylinderCandidate.msg"
+  "msg/CylinderSnapshot.msg"
+  "msg/ValidatedCylinder.msg"
+  "msg/ValidatedCylinderArray.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs sensor_msgs std_msgs
 )
 

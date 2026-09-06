@@ -31,6 +31,31 @@ The output uses OpenCV HSV units: hue 0-179 and saturation/value 0-255. Runtime
 CSV data belongs in an operator data directory and must not be committed by
 default.
 
+## Analyse the CSV
+
+The repository includes a repeatable analyser. It uses the 2nd and 98th
+percentiles instead of raw minima and maxima, adds small configurable margins,
+handles hue as a circular value (including red across 179/0), and reports how
+many labelled background pixels the proposed range would accept.
+
+After building and sourcing the workspace, run:
+
+```bash
+ros2 run color_object_sorter hsv_analyzer "$HOME/hsv_samples.csv"
+```
+
+To analyse only the official colors:
+
+```bash
+ros2 run color_object_sorter hsv_analyzer "$HOME/hsv_samples.csv" \
+  --labels blue green red
+```
+
+The output contains click counts, pixel counts, background overlap, and a
+suggested ROS parameter block. Review that report before copying values into
+`config/perception.yaml`; the analyser deliberately does not modify the active
+configuration automatically.
+
 As of 2026-09-06, the official Task 3 colors are blue, a replacement green,
 and red. The former pink and green objects and their calibration samples are
 legacy data and must not be mixed into the new CSV. Blue may be left unchanged,

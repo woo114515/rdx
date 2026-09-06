@@ -1,0 +1,45 @@
+cylinder_snapshot_builder:
+  ros__parameters:
+    scan_topic: /scan
+    map_topic: /map
+    output_topic: /cylinder_snapshot/candidates
+    marker_topic: /cylinder_snapshot/markers
+    fixed_frame: map
+    # Empty lists accept any count above minimum_object_count. To add or remove
+    # a color, edit these lists and the matching HSV ranges in perception.yaml.
+    inventory_colors: [blue, green, red]
+    inventory_counts: [2, 2, 2]
+    minimum_object_count: 1
+    minimum_observations: 6
+    association_distance: 0.12
+    # Distinct physical targets are expected to be farther apart than this.
+    minimum_object_separation: 0.20
+    history_size: 30
+    # Remove an old ID after six consecutive scans without a match. This is
+    # long enough for brief dropouts but prevents old and replacement tracks
+    # from being published together indefinitely.
+    maximum_missed_updates: 5
+    maximum_point_gap: 0.08
+    minimum_cluster_points: 2
+    minimum_diameter: 0.015
+    maximum_diameter: 0.16
+    nominal_radius: 0.035
+    transform_timeout: 0.15
+    require_map_filter: true
+    map_occupancy_threshold: 50
+    map_search_radius: 0.12
+    maximum_map_component_diameter: 0.20
+    # Initial target group is guaranteed to be in front of the robot. These
+    # limits are evaluated in the live LiDAR frame before conversion to map.
+    observation_min_range: 0.25
+    observation_max_range: 4.0
+    observation_half_angle: 1.2217304764  # 70 degrees
+    observation_max_lateral: 2.0
+    # Neighboring targets are about 0.30 m apart. A larger link distance keeps
+    # the group connected when one target is temporarily occluded.
+    maximum_group_neighbor_distance: 1.0
+    use_workspace_bounds: false
+    workspace_min_x: -10.0
+    workspace_max_x: 10.0
+    workspace_min_y: -10.0
+    workspace_max_y: 10.0

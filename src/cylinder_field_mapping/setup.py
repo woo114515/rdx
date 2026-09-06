@@ -19,11 +19,12 @@ setup(
     zip_safe=True,
     maintainer="woo114515",
     maintainer_email="woo114515@users.noreply.github.com",
-    description="Persistent map-level cylinder tracking and envelope geometry.",
+    description="LiDAR-first cylinder snapshots and field geometry.",
     license="MIT",
     entry_points={
         "console_scripts": [
             "field_mapper = cylinder_field_mapping.node:main",
+            "snapshot_builder = cylinder_field_mapping.snapshot_node:main",
         ],
     },
 )

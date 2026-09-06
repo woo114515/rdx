@@ -11,6 +11,7 @@ import numpy as np
 import rclpy
 from color_object_sorter_interfaces.msg import ColorObject, ColorObjectArray
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import (
     DurabilityPolicy,
     HistoryPolicy,
@@ -103,21 +104,48 @@ class ColorObjectDetectorNode(Node):
             "minimum_solidity": 0.75,
             "tracker_maximum_distance": 0.25,
             "tracker_maximum_missed": 3,
-            "colors": ["blue", "green", "red"],
-            "hsv.blue.range_count": 1,
-            "hsv.blue.lower_1": [88, 180, 60],
-            "hsv.blue.upper_1": [100, 255, 255],
-            "hsv.green.range_count": 1,
-            "hsv.green.lower_1": [63, 75, 95],
-            "hsv.green.upper_1": [78, 140, 170],
-            "hsv.red.range_count": 2,
-            "hsv.red.lower_1": [0, 205, 100],
-            "hsv.red.upper_1": [6, 255, 190],
-            "hsv.red.lower_2": [168, 205, 100],
-            "hsv.red.upper_2": [179, 255, 190],
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
+        self.declare_parameter("colors", ["blue", "green", "red"])
+
+        built_in_ranges = {
+            "blue": [([88, 180, 60], [100, 255, 255])],
+            "green": [([63, 75, 95], [78, 140, 170])],
+            "red": [
+                ([0, 205, 100], [6, 255, 190]),
+                ([168, 205, 100], [179, 255, 190]),
+            ],
+        }
+        colors = tuple(str(item) for item in self.get_parameter("colors").value)
+        for color in colors:
+            defaults_for_color = built_in_ranges.get(color, [])
+            count_name = f"hsv.{color}.range_count"
+            if defaults_for_color:
+                self.declare_parameter(count_name, len(defaults_for_color))
+            else:
+                self.declare_parameter(count_name)
+            parameter = self.get_parameter(count_name)
+            if parameter.type_ == Parameter.Type.NOT_SET:
+                raise ValueError(f"missing {count_name} for configured color")
+            count = int(parameter.value)
+            if count < 1:
+                raise ValueError(f"{color} must have at least one HSV range")
+            for index in range(1, count + 1):
+                pair = (
+                    defaults_for_color[index - 1]
+                    if index <= len(defaults_for_color)
+                    else None
+                )
+                for bound, default_index in (("lower", 0), ("upper", 1)):
+                    name = f"hsv.{color}.{bound}_{index}"
+                    if pair is None:
+                        self.declare_parameter(name)
+                    else:
+                        self.declare_parameter(name, pair[default_index])
+                    value = self.get_parameter(name)
+                    if value.type_ == Parameter.Type.NOT_SET:
+                        raise ValueError(f"missing {name} for configured color")
 
     def _load_ranges(self) -> dict[str, tuple[HsvRange, ...]]:
         result: dict[str, tuple[HsvRange, ...]] = {}
