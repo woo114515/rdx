@@ -18,7 +18,7 @@ def make_multi_detector() -> ColorObjectDetector:
         {
             "blue": (HsvRange((90, 80, 50), (135, 255, 255)),),
             "green": (HsvRange((35, 80, 60), (85, 255, 255)),),
-            "pink": (
+            "red": (
                 HsvRange((0, 50, 80), (12, 255, 255)),
                 HsvRange((165, 50, 80), (179, 255, 255)),
             ),
@@ -51,22 +51,22 @@ def test_hsv_range_rejects_invalid_values() -> None:
     raise AssertionError("invalid hue must be rejected")
 
 
-def test_detects_blue_green_and_pink() -> None:
+def test_detects_blue_green_and_red() -> None:
     image = np.zeros((240, 320, 3), dtype=np.uint8)
     cv2.rectangle(image, (20, 40), (70, 160), (255, 0, 0), -1)  # blue
     cv2.rectangle(image, (130, 40), (180, 160), (0, 255, 0), -1)  # green
-    cv2.rectangle(image, (230, 40), (280, 160), (0, 0, 255), -1)  # pink (hue ~0)
+    cv2.rectangle(image, (230, 40), (280, 160), (0, 0, 255), -1)  # red
     result = make_multi_detector().detect(image)
-    assert {item.color for item in result.detections} == {"blue", "green", "pink"}
+    assert {item.color for item in result.detections} == {"blue", "green", "red"}
 
 
-def test_pink_detected_in_both_hue_ranges() -> None:
+def test_red_detected_in_both_hue_ranges() -> None:
     image = np.zeros((240, 320, 3), dtype=np.uint8)
     cv2.rectangle(image, (20, 40), (70, 160), (0, 0, 255), -1)  # hue ~0
     cv2.rectangle(image, (230, 40), (280, 160), (8, 0, 120), -1)  # hue ~178
     result = make_multi_detector().detect(image)
-    pink = [item for item in result.detections if item.color == "pink"]
-    assert len(pink) == 2
+    red = [item for item in result.detections if item.color == "red"]
+    assert len(red) == 2
 
 
 def test_filters_small_area_noise() -> None:

@@ -20,7 +20,8 @@ recalibrated if camera mounting, resolution, or cropping changes. The observed
 effective horizontal field of view is only about 45°, so searching ultimately
 requires robot rotation.
 
-Pink detection is less reliable than blue under the tested lighting. In a
+The following pink result is retained only as historical calibration evidence;
+pink is no longer a Task 3 target after the 2026-09-06 color replacement. In a
 five-second stationary sample, pink appeared in 31 of 40 detection frames and
 had a median confidence of about 0.68, while blue appeared in all 40 frames
 with median confidence about 0.93. A pink detection must therefore be treated
@@ -49,9 +50,9 @@ timestamp and `lidar_link` frame because bearing and distance are LiDAR
 measurements. If no fresh scan exists, unmatched output retains the camera
 header and must not be interpreted as a LiDAR-frame position.
 
-Green recognition remains deferred: the green cylinder is not reliably
-separated from the floor/background. Fusion does not correct color
-misclassification.
+The former green-recognition issue applies to the abandoned green cylinders.
+Replacement-green and red have new sampled HSV ranges but still require live
+acceptance. Fusion does not correct color misclassification.
 
 ## Multi-frame confirmation
 

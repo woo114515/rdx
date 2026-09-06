@@ -15,7 +15,7 @@ Select the active label before clicking inside a uniformly coloured area:
 
 - `b`: blue target
 - `g`: green target
-- `p`: pink target
+- `r`: red target
 - `y`: yellow distractor (not a target)
 - `n`: background or another distractor
 - `u`: undo the most recent patch
@@ -30,6 +30,11 @@ can be separated from common false positives.
 The output uses OpenCV HSV units: hue 0-179 and saturation/value 0-255. Runtime
 CSV data belongs in an operator data directory and must not be committed by
 default.
+
+As of 2026-09-06, the official Task 3 colors are blue, a replacement green,
+and red. The former pink and green objects and their calibration samples are
+legacy data and must not be mixed into the new CSV. Blue may be left unchanged,
+but collecting a small blue validation set under the same lighting is useful.
 
 ## View detector output
 

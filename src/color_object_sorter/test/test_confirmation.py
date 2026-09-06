@@ -7,7 +7,7 @@ from color_object_sorter.confirmation import Observation, TemporalConfirmer
 
 def observation(
     stamp: float,
-    color: str = "pink",
+    color: str = "red",
     bearing: float = 0.25,
     distance: float = 1.2,
     matched: bool = True,
@@ -33,7 +33,7 @@ def test_single_frame_never_confirms() -> None:
 
 def test_rejects_unstable_color_vote() -> None:
     confirmer = TemporalConfirmer(minimum_observations=4)
-    colors = ["pink", "blue", "pink", "blue"]
+    colors = ["red", "blue", "red", "blue"]
     for index, color in enumerate(colors):
         result = confirmer.update(index * 0.1, [observation(index * 0.1, color=color)])
     assert not result[0].confirmed

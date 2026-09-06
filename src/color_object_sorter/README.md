@@ -1,8 +1,10 @@
 # color_object_sorter
 
-Fresh Task 3 implementation for detecting and tracking blue, green, and pink
-objects. The first milestone is perception-only: this package has no velocity
-publisher and cannot move the robot.
+Task 3 perception implementation. The physical targets changed on 2026-09-06
+from blue/legacy-green/pink to blue/replacement-green/red. Blue remains valid;
+replacement-green and red were recalibrated, deployed, and visually reviewed
+without obvious misclassification in the tested scene on 2026-09-06. This
+package has no velocity publisher and cannot move the robot.
 
 It subscribes to `/csi/image_raw/compressed` using sensor-data QoS and publishes
 `/color_sorter/detections`, `/color_sorter/debug/compressed`, and
@@ -17,10 +19,9 @@ maps image center `normalized_x=-0.069` to LiDAR 0 rad and
 the scan is stale or no multi-beam cluster exists. Neither perception node can
 publish velocity commands.
 
-Pink detection is currently less reliable than blue (31/40 observed frames and
-about 0.68 median confidence in the stationary calibration). Downstream logic
-must require multiple consistent pink observations plus a valid LiDAR match;
-it must not initiate motion from one pink frame.
+The former pink reliability result is historical and does not apply to the new
+red target. New red and replacement-green thresholds were derived from the
+2026-09-06 replacement-target dataset and still require live acceptance.
 
 `temporal_object_confirmation` consumes localized observations and publishes
 only stable tracks on `/color_sorter/confirmed_objects`. Its one-second window

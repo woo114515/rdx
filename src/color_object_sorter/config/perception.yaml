@@ -17,16 +17,18 @@ color_object_detector:
     minimum_solidity: 0.75
     tracker_maximum_distance: 0.25
     tracker_maximum_missed: 3
-    colors: [blue, green, pink]
+    colors: [blue, green, red]
     hsv.blue.range_count: 1
     hsv.blue.lower_1: [88, 180, 60]
     hsv.blue.upper_1: [100, 255, 255]
     hsv.green.range_count: 1
-    hsv.green.lower_1: [45, 30, 110]
-    hsv.green.upper_1: [78, 80, 240]
-    hsv.pink.range_count: 1
-    hsv.pink.lower_1: [152, 120, 140]
-    hsv.pink.upper_1: [168, 220, 255]
+    hsv.green.lower_1: [63, 75, 95]
+    hsv.green.upper_1: [78, 140, 170]
+    hsv.red.range_count: 2
+    hsv.red.lower_1: [0, 205, 100]
+    hsv.red.upper_1: [6, 255, 190]
+    hsv.red.lower_2: [168, 205, 100]
+    hsv.red.upper_2: [179, 255, 190]
 
 color_lidar_fusion:
   ros__parameters:

@@ -18,7 +18,7 @@ def test_track_id_survives_small_motion() -> None:
 def test_different_colors_do_not_share_track() -> None:
     tracker = ObjectTracker()
     first = tracker.update((detection(0.0, "blue"),))
-    second = tracker.update((detection(0.0, "pink"),))
+    second = tracker.update((detection(0.0, "red"),))
     assert first[0].track_id != second[0].track_id
 
 

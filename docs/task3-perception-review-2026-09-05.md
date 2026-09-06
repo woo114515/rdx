@@ -29,7 +29,8 @@
 - 本地 `pytest`：`13 passed`（原 5 + 新增 8）。
 - 新增覆盖：
   - 蓝、绿、粉三色同时检出；
-  - 粉色双 HSV 区间（hue≈0 与 hue≈178 两目标均标为 `pink`）；
+  - 当时实现了粉色双 HSV 区间；该实物后来被红色替换，当前正式配置见
+    `docs/task3-color-change-2026-09-06.md`；
   - 小面积噪声过滤；
   - 非法 `area_ratio`/`aspect_ratio`/`extent`/`solidity` 参数安全失败；
   - `track_id` 在目标丢失后清除、重现后重新分配；
