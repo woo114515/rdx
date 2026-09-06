@@ -4,6 +4,8 @@ string color
 string shape
 float32 confidence
 float32 normalized_x
+float32 normalized_width
 float32 bearing
 float32 distance
 bool matched
+string association_status

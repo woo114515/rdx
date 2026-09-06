@@ -2,7 +2,13 @@ import math
 
 import pytest
 
-from color_object_sorter.fusion import associate_scan, camera_bearing
+from color_object_sorter.fusion import (
+    LaserCluster,
+    associate_one_to_one,
+    associate_scan,
+    camera_bearing,
+    extract_scan_clusters,
+)
 
 
 def test_camera_center_maps_to_forward() -> None:
@@ -79,3 +85,58 @@ def test_association_normalizes_wrapped_scan_bearing() -> None:
     )
     assert match is not None
     assert match.bearing == pytest.approx(-0.015)
+
+
+def test_extracts_distinct_range_clusters() -> None:
+    clusters = extract_scan_clusters(
+        [3.0, 3.0, math.nan, 1.0, 1.02, math.nan, 2.0, 2.01],
+        angle_min=-0.04,
+        angle_increment=0.01,
+        range_min=0.15,
+        range_max=20.0,
+        maximum_range_jump=0.15,
+        minimum_cluster_points=2,
+    )
+    assert [item.distance for item in clusters] == pytest.approx([3.0, 1.01, 2.005])
+
+
+def test_global_assignment_never_reuses_cluster() -> None:
+    clusters = (
+        LaserCluster(math.radians(0.0), 1.0, 3),
+        LaserCluster(math.radians(4.0), 1.2, 3),
+    )
+    result = associate_one_to_one(
+        [math.radians(0.5), math.radians(3.0)],
+        [math.radians(5.0), math.radians(5.0)],
+        clusters,
+        ambiguity_margin=math.radians(0.2),
+    )
+    indices = [item.cluster_index for item in result if item.cluster_index is not None]
+    assert len(indices) == len(set(indices)) == 2
+
+
+def test_competing_visual_detections_are_ambiguous() -> None:
+    clusters = (LaserCluster(0.0, 1.0, 3),)
+    result = associate_one_to_one(
+        [math.radians(-0.2), math.radians(0.2)],
+        [math.radians(4.0), math.radians(4.0)],
+        clusters,
+        ambiguity_margin=math.radians(1.0),
+    )
+    assert [item.status for item in result] == ["ambiguous", "ambiguous"]
+    assert all(item.cluster_index is None for item in result)
+
+
+def test_merged_wide_detection_rejects_two_lidar_clusters() -> None:
+    clusters = (
+        LaserCluster(math.radians(-2.0), 0.8, 3),
+        LaserCluster(math.radians(2.0), 1.4, 3),
+    )
+    result = associate_one_to_one(
+        [0.0],
+        [math.radians(4.0)],
+        clusters,
+        ambiguity_margin=math.radians(0.5),
+    )
+    assert result[0].status == "ambiguous"
+    assert result[0].cluster_index is None

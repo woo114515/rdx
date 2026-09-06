@@ -82,3 +82,32 @@ def test_missing_frames_reduce_detection_rate() -> None:
     result = confirmer.update(0.3, [observation(0.3)])
     assert not result[0].confirmed
     assert result[0].detection_rate == pytest.approx(0.5)
+
+
+def test_missing_current_frame_reports_occluded() -> None:
+    confirmer = TemporalConfirmer(minimum_observations=2)
+    confirmer.update(0.0, [observation(0.0)])
+    confirmer.update(0.1, [observation(0.1)])
+    result = confirmer.update(0.2, [])
+    assert result[0].state == "occluded"
+    assert not result[0].confirmed
+
+
+def test_ambiguous_current_observation_cannot_confirm() -> None:
+    confirmer = TemporalConfirmer(minimum_observations=2)
+    confirmer.update(0.0, [observation(0.0)])
+    item = observation(0.1)
+    ambiguous = Observation(
+        item.frame,
+        item.stamp,
+        item.color,
+        item.shape,
+        item.confidence,
+        item.bearing,
+        math.nan,
+        False,
+        "ambiguous",
+    )
+    result = confirmer.update(0.1, [ambiguous])
+    assert result[0].state == "ambiguous"
+    assert not result[0].confirmed

@@ -12,3 +12,4 @@ float32 lidar_match_rate
 float32 bearing_stddev
 float32 distance_stddev
 bool confirmed
+string state

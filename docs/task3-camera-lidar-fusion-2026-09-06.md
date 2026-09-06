@@ -39,10 +39,13 @@ robot testing.
 - Executable: `color_lidar_fusion`
 - Launch: `ros2 launch color_object_sorter perception.launch.py`
 
-The node rejects scans older than 0.25 s. Within ±4° of the projected camera
-bearing it selects the nearest contiguous cluster containing at least two
-returns whose adjacent ranges differ by no more than 0.15 m. An unmatched
-object remains in the output with `matched=false` and `distance=NaN`.
+The node rejects scans older than 0.25 s. It first extracts all contiguous
+clusters containing at least two returns whose adjacent ranges differ by no
+more than 0.15 m. It then globally assigns visual detections to clusters while
+enforcing one detection per cluster and one cluster per detection. The search
+window is at least ±4° and expands with visual bounding-box width so a merged
+wide contour can expose multiple candidates. An unmatched or ambiguous object
+remains in the output with `matched=false` and `distance=NaN`.
 Published bearings are normalized to `[-pi, pi]` even though the MS200P scan
 uses approximately `[0, 2*pi]`.
 For a successful synchronized fusion, the output header carries the LiDAR scan
@@ -77,9 +80,10 @@ not the diagnostic or raw localized topics.
 
 ## Overlap and occlusion limitations
 
-The current implementation is intended for objects that are visibly separated
-and have clearly different bearings. Overlapping objects are not yet handled
-reliably:
+The implementation is intended for objects that are visibly separated and
+have clearly different bearings. Stage-1 one-to-one allocation prevents a
+single LiDAR cluster from being reported as two valid objects, but overlap is
+still not fully recoverable:
 
 - Different-color objects may remain separately detectable only when each has
   enough visible image area.
@@ -88,19 +92,27 @@ reliably:
 - The 2D LiDAR normally observes only the nearer surface when one cylinder
   occludes another at the same bearing; it cannot provide an independent range
   for the hidden cylinder.
-- Fusion currently associates every visual detection independently. Two nearby
-  visual detections can therefore be assigned the same LiDAR cluster in one
-  frame. `matched=true` alone does not prove that the LiDAR distinguished both
-  objects.
+- Two visual detections competing for one similarly plausible cluster are
+  marked `ambiguous`; neither is permitted to use that range for confirmation.
+- One wide visual contour spanning multiple similarly plausible clusters is
+  also marked `ambiguous` instead of silently selecting the nearest surface.
 - The temporal confirmer associates by bearing and distance so identities may
   merge or swap during crossing and short occlusion. Conflicting colors often
   reduce `color_consistency` and conservatively prevent confirmation, but this
   is rejection rather than correct multi-object separation.
 
 Consequently, overlapping, merged, crossing, or occluded observations must not
-trigger approach or sorting motion. A later revision should extract LiDAR
-clusters first and perform one-to-one global assignment, ensuring that one
-cluster is used by at most one visual object per frame. It should also expose
-explicit `occluded` and `ambiguous` states and retain hidden tracks only for a
-short prediction interval. Until that work is completed, Task 3 placement and
-search should keep candidate cylinders spatially separated.
+trigger approach or sorting motion. `association_status` reports `matched`,
+`unmatched`, `ambiguous`, or `stale_scan`; temporal diagnostic state reports
+`tentative`, `confirmed`, `ambiguous`, or `occluded`. Hidden tracks are retained
+only inside the short confirmation window and are removed from the confirmed
+output immediately. Multi-view observation is still required to separate a
+merged contour or reveal a fully hidden cylinder.
+
+The reported physical spacing between adjacent cylinders was corrected on
+2026-09-06 from approximately 15 cm to approximately 30 cm. It is not yet known
+whether this is center-to-center distance or clear edge-to-edge distance. The
+20 cm-wide robot must not treat the nominal 30 cm as a traversable gap until
+that definition, cylinder diameter, localization error, and swept footprint
+have been measured. The larger spacing helps perception but does not remove
+the one-to-one association and occlusion requirements above.

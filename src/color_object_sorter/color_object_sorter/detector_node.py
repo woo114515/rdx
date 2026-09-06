@@ -171,6 +171,7 @@ class ColorObjectDetectorNode(Node):
             detected.center_y = detection.center_y
             detected.normalized_x = detection.normalized_x
             detected.normalized_y = detection.normalized_y
+            detected.normalized_width = detection.width / image.shape[1]
             detected.area_ratio = detection.area_ratio
             output.objects.append(detected)
         self._detections_publisher.publish(output)

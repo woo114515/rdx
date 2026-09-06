@@ -8,4 +8,5 @@ float32 center_x
 float32 center_y
 float32 normalized_x
 float32 normalized_y
+float32 normalized_width
 float32 area_ratio

@@ -77,6 +77,7 @@ class TemporalConfirmationNode(Node):
                 bearing=item.bearing,
                 distance=item.distance,
                 matched=item.matched,
+                association_status=item.association_status,
             )
             for item in message.objects
         ]
@@ -101,6 +102,7 @@ class TemporalConfirmationNode(Node):
             item.bearing_stddev = summary.bearing_stddev
             item.distance_stddev = summary.distance_stddev
             item.confirmed = summary.confirmed
+            item.state = summary.state
             status.objects.append(item)
             if summary.confirmed:
                 output.objects.append(item)

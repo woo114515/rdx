@@ -14,7 +14,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 
-from .fusion import associate_scan, camera_bearing
+from .fusion import associate_one_to_one, camera_bearing, extract_scan_clusters
 
 
 class ColorLidarFusionNode(Node):
@@ -28,6 +28,7 @@ class ColorLidarFusionNode(Node):
         self.declare_parameter("center_normalized_x", -0.069)
         self.declare_parameter("radians_per_normalized_x", -0.3926990817)
         self.declare_parameter("association_half_window", math.radians(4.0))
+        self.declare_parameter("ambiguity_margin", math.radians(1.0))
         self.declare_parameter("maximum_scan_age", 0.25)
         self.declare_parameter("maximum_range_jump", 0.15)
         self.declare_parameter("minimum_cluster_points", 2)
@@ -61,9 +62,47 @@ class ColorLidarFusionNode(Node):
             self._stamp_seconds(message.header.stamp)
             - self._stamp_seconds(scan.header.stamp)
         ) <= float(self.get_parameter("maximum_scan_age").value)
-        output.header = scan.header if scan_is_fresh and scan is not None else message.header
+        output.header = (
+            scan.header if scan_is_fresh and scan is not None else message.header
+        )
 
-        for detected in message.objects:
+        detections = list(message.objects)
+        radians_per_x = float(
+            self.get_parameter("radians_per_normalized_x").value
+        )
+        predicted_bearings = [
+            camera_bearing(
+                detected.normalized_x,
+                float(self.get_parameter("center_normalized_x").value),
+                radians_per_x,
+            )
+            for detected in detections
+        ]
+        base_window = float(self.get_parameter("association_half_window").value)
+        half_windows = [
+            max(base_window, abs(radians_per_x) * detected.normalized_width)
+            for detected in detections
+        ]
+        clusters = ()
+        associations = ()
+        if scan_is_fresh and scan is not None:
+            clusters = extract_scan_clusters(
+                scan.ranges,
+                scan.angle_min,
+                scan.angle_increment,
+                scan.range_min,
+                scan.range_max,
+                float(self.get_parameter("maximum_range_jump").value),
+                int(self.get_parameter("minimum_cluster_points").value),
+            )
+            associations = associate_one_to_one(
+                predicted_bearings,
+                half_windows,
+                clusters,
+                float(self.get_parameter("ambiguity_margin").value),
+            )
+
+        for index, detected in enumerate(detections):
             item = LocalizedColorObject()
             item.header = output.header
             item.track_id = detected.track_id
@@ -71,29 +110,19 @@ class ColorLidarFusionNode(Node):
             item.shape = detected.shape
             item.confidence = detected.confidence
             item.normalized_x = detected.normalized_x
-            predicted = camera_bearing(
-                detected.normalized_x,
-                float(self.get_parameter("center_normalized_x").value),
-                float(self.get_parameter("radians_per_normalized_x").value),
-            )
+            item.normalized_width = detected.normalized_width
+            predicted = predicted_bearings[index]
             item.bearing = predicted
             item.distance = math.nan
             item.matched = False
-            if scan_is_fresh and scan is not None:
-                match = associate_scan(
-                    scan.ranges,
-                    scan.angle_min,
-                    scan.angle_increment,
-                    predicted,
-                    float(self.get_parameter("association_half_window").value),
-                    scan.range_min,
-                    scan.range_max,
-                    float(self.get_parameter("maximum_range_jump").value),
-                    int(self.get_parameter("minimum_cluster_points").value),
-                )
-                if match is not None:
-                    item.bearing = match.bearing
-                    item.distance = match.distance
+            item.association_status = "stale_scan"
+            if scan_is_fresh:
+                association = associations[index]
+                item.association_status = association.status
+                if association.status == "matched":
+                    cluster = clusters[association.cluster_index]
+                    item.bearing = cluster.bearing
+                    item.distance = cluster.distance
                     item.matched = True
             output.objects.append(item)
         self._publisher.publish(output)

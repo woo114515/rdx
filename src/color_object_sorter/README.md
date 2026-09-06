@@ -33,11 +33,13 @@ All candidates and their metrics are published on
 `/color_sorter/confirmation_status` for threshold diagnosis; consumers that
 can cause motion must use only `/color_sorter/confirmed_objects`.
 
-Overlapping or occluded targets are unsupported. In particular, independent
-per-detection fusion can currently assign one LiDAR cluster to more than one
-visual detection, while same-color overlap can merge into one image contour.
-These cases must not trigger motion; see the Task 3 fusion document for the
-required one-to-one association follow-up.
+Fusion now extracts LiDAR clusters once per scan and assigns them globally, so
+one cluster cannot be reused by two visual detections. Competing detections and
+a wide merged contour spanning similarly plausible clusters are marked
+`ambiguous` and cannot be confirmed. A temporarily missing temporal track is
+reported as `occluded`. Same-color image contours can still merge, and a fully
+hidden object cannot be recovered from a single 2D scan; these cases require a
+new viewing position and must not trigger motion.
 
 ## Detection viewer
 

@@ -39,6 +39,8 @@ color_lidar_fusion:
     center_normalized_x: -0.069
     radians_per_normalized_x: -0.3926990817
     association_half_window: 0.0698131701
+    # Similar alternatives within one degree are rejected as ambiguous.
+    ambiguity_margin: 0.0174532925
     maximum_scan_age: 0.25
     maximum_range_jump: 0.15
     minimum_cluster_points: 2

@@ -18,6 +18,7 @@ class Observation:
     bearing: float
     distance: float
     matched: bool
+    association_status: str = "matched"
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class Confirmation:
     bearing_stddev: float
     distance_stddev: float
     confirmed: bool
+    state: str
 
 
 @dataclass
@@ -74,7 +76,11 @@ class TemporalConfirmer:
         self._next_track_id = 1
         self._frame = 0
 
-    def update(self, stamp: float, observations: list[Observation]) -> list[Confirmation]:
+    def update(
+        self,
+        stamp: float,
+        observations: list[Observation],
+    ) -> list[Confirmation]:
         self._frame += 1
         self._frame_stamps.append((self._frame, stamp))
         cutoff = stamp - self.window_seconds
@@ -105,6 +111,7 @@ class TemporalConfirmer:
                     bearing=source.bearing,
                     distance=source.distance,
                     matched=source.matched,
+                    association_status=source.association_status,
                 )
             )
         return [self._summarize(track) for track in self._tracks]
@@ -138,7 +145,8 @@ class TemporalConfirmer:
         detection_rate = len({item.frame for item in items}) / frame_count
         color_consistency = color_count / len(items)
         lidar_match_rate = len(matched) / len(colored)
-        confirmed = (
+        currently_observed = items[-1].frame == self._frame
+        stable = (
             len(items) >= self.minimum_observations
             and detection_rate >= self.minimum_detection_rate
             and color_consistency >= self.minimum_color_consistency
@@ -147,6 +155,16 @@ class TemporalConfirmer:
             and bearing_stddev <= self.maximum_bearing_stddev
             and distance_stddev <= self.maximum_distance_stddev
         )
+        latest_status = items[-1].association_status
+        if not currently_observed:
+            state = "occluded"
+        elif latest_status == "ambiguous":
+            state = "ambiguous"
+        elif stable:
+            state = "confirmed"
+        else:
+            state = "tentative"
+        confirmed = state == "confirmed"
         return Confirmation(
             track_id=track.track_id,
             color=color,
@@ -161,6 +179,7 @@ class TemporalConfirmer:
             bearing_stddev=bearing_stddev,
             distance_stddev=distance_stddev,
             confirmed=confirmed,
+            state=state,
         )
 
 
