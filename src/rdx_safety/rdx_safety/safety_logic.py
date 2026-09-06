@@ -7,6 +7,18 @@ import math
 from typing import Optional, Sequence, Tuple
 
 
+def heartbeat_is_stale(
+    now: float, stamp: Optional[float], timeout: float
+) -> bool:
+    """Return true when a required heartbeat is absent or outside its TTL."""
+    if not math.isfinite(now) or not math.isfinite(timeout) or timeout <= 0.0:
+        raise ValueError("now and timeout must be finite; timeout must be positive")
+    if stamp is None or not math.isfinite(stamp):
+        return True
+    age = now - stamp
+    return age < 0.0 or age > timeout
+
+
 @dataclass(frozen=True)
 class Velocity:
     """Planar robot velocity in the base frame."""
@@ -279,7 +291,10 @@ class SafetyController:
     @staticmethod
     def _normalize_range(value: float, scan: Scan) -> Optional[float]:
         if math.isnan(value) or value <= 0.0:
-            return None
+            # Some lidars encode an object closer than range_min as zero or
+            # NaN. In the active motion sector, fail closed instead of
+            # treating that return as free space.
+            return 0.0
         if math.isinf(value) or value > scan.range_max:
             return scan.range_max
         return value

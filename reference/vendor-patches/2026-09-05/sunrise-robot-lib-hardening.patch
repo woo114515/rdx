@@ -1,0 +1,283 @@
+--- a/SunriseRobotLib/SunriseRobotLib.py
++++ b/SunriseRobotLib/SunriseRobotLib.py
+@@ -18,10 +18,18 @@
+         # com="/dev/ttyAMA0"
+         # com="/dev/myserial"
+ 
+-        self.ser = serial.Serial(com, 115200)
++        self.ser = serial.Serial(com, 115200, timeout=0.2, write_timeout=0.2)
+ 
+         self.__delay_time = delay
+         self.__debug = debug
++        self.__uart_state = 0
++        self.__receive_thread = None
++        self.__receive_stop = threading.Event()
++        self.__receive_error = None
++        self.__last_receive_time = None
++        self.__last_report_times = {}
++        self.__state_lock = threading.Lock()
++        self.__write_lock = threading.Lock()
+ 
+         self.__HEAD = 0xFF
+         self.__DEVICE_ID = 0xFC
+@@ -131,9 +139,65 @@
+ 
+ 
+     def __del__(self):
+-        self.ser.close()
++        self.close()
++
++    def close(self):
++        """Stop receiving and close the serial device."""
++        self.__receive_stop.set()
++        try:
++            if self.ser.is_open:
++                self.ser.close()
++        except (AttributeError, OSError, serial.SerialException):
++            pass
+         self.__uart_state = 0
+-        print("serial Close!")
++
++    def get_receive_status(self):
++        """Return (thread_alive, last_byte_age, last_error)."""
++        with self.__state_lock:
++            thread = self.__receive_thread
++            age = None
++            if self.__last_receive_time is not None:
++                age = time.monotonic() - self.__last_receive_time
++            return bool(thread and thread.is_alive()), age, self.__receive_error
++
++    def get_report_age(self, report_type):
++        """Return monotonic age for a successfully parsed report type."""
++        with self.__state_lock:
++            report_time = self.__last_report_times.get(report_type)
++        return None if report_time is None else time.monotonic() - report_time
++
++    def __mark_report_received(self, report_type):
++        now = time.monotonic()
++        with self.__state_lock:
++            self.__last_receive_time = now
++            self.__last_report_times[report_type] = now
++            self.__receive_error = None
++
++    def __read_byte(self):
++        value = self.ser.read(1)
++        if not value:
++            raise TimeoutError("serial read timed out")
++        return value[0]
++
++    def __serial_write(self, command):
++        """Serialize writes and report short/failed writes to the caller."""
++        try:
++            payload = bytes(command)
++            with self.__write_lock:
++                written = self.ser.write(payload)
++            if written != len(payload):
++                raise serial.SerialTimeoutException(
++                    "short serial write: %d of %d bytes"
++                    % (written, len(payload))
++                )
++            return True
++        except (OSError, serial.SerialException) as error:
++            with self.__state_lock:
++                self.__receive_error = "serial write failed: %s" % error
++            if self.__debug:
++                print(self.__receive_error)
++            return False
++
+ 
+     # 根据数据帧的类型来做出对应的解析
+     # According to the type of data frame to make the corresponding parsing
+@@ -254,32 +318,49 @@
+ 
+     # 接收数据 receive data
+     def __receive_data(self):
+-        # 清空缓冲区
+-        self.ser.flushInput()
+-        while True:
+-            head1 = bytearray(self.ser.read())[0]
+-            if head1 == self.__HEAD:
+-                head2 = bytearray(self.ser.read())[0]
+-                check_sum = 0
+-                rx_check_num = 0
+-                if head2 == self.__DEVICE_ID - 1:
+-                    ext_len = bytearray(self.ser.read())[0]
+-                    ext_type = bytearray(self.ser.read())[0]
+-                    ext_data = []
+-                    check_sum = ext_len + ext_type
+-                    data_len = ext_len - 2
+-                    while len(ext_data) < data_len:
+-                        value = bytearray(self.ser.read())[0]
+-                        ext_data.append(value)
+-                        if len(ext_data) == data_len:
+-                            rx_check_num = value
+-                        else:
+-                            check_sum = check_sum + value
+-                    if check_sum % 256 == rx_check_num:
+-                        self.__parse_data(ext_type, ext_data)
++        """Read framed reports until stopped or the transport fails."""
++        try:
++            self.ser.reset_input_buffer()
++            while not self.__receive_stop.is_set():
++                try:
++                    head1 = self.__read_byte()
++                except TimeoutError:
++                    continue
++                if head1 != self.__HEAD:
++                    continue
++                head2 = self.__read_byte()
++                if head2 != self.__DEVICE_ID - 1:
++                    continue
++                ext_len = self.__read_byte()
++                if ext_len < 3:
++                    continue
++                ext_type = self.__read_byte()
++                ext_data = []
++                check_sum = ext_len + ext_type
++                data_len = ext_len - 2
++                while len(ext_data) < data_len:
++                    value = self.__read_byte()
++                    ext_data.append(value)
++                    if len(ext_data) == data_len:
++                        rx_check_num = value
+                     else:
+-                        if self.__debug:
+-                            print("check sum error:", ext_len, ext_type, ext_data)
++                        check_sum += value
++                if check_sum % 256 == rx_check_num:
++                    self.__parse_data(ext_type, ext_data)
++                    self.__mark_report_received(ext_type)
++                elif self.__debug:
++                    print("check sum error:", ext_len, ext_type, ext_data)
++        except (
++            OSError, serial.SerialException, TimeoutError, struct.error,
++            IndexError, ValueError, TypeError
++        ) as error:
++            with self.__state_lock:
++                self.__receive_error = "%s: %s" % (type(error).__name__, error)
++            if self.__debug:
++                print("serial receive stopped:", self.__receive_error)
++        finally:
++            self.__uart_state = 0
++
+ 
+     # 请求数据， function：对应要返回数据的功能字，parm：传入的参数。
+     # Request data, function: corresponding function word to return data, parm: parameter passed in
+@@ -343,19 +424,30 @@
+     # 开启接收和处理数据的线程
+     # Start the thread that receives and processes data
+     def create_receive_threading(self):
+-        try:
+-            if self.__uart_state == 0:
+-                name1 = "task_serial_receive"
+-                task_receive = threading.Thread(target=self.__receive_data, name=name1)
+-                task_receive.setDaemon(True)
+-                task_receive.start()
+-                print("----------------create receive threading--------------")
+-                self.__uart_state = 1
+-                time.sleep(.05)
+-        except:
+-            print('---create_receive_threading error!---')
+-            pass
+-    
++        """Start or restart the receive worker and report success."""
++        try:
++            if self.__receive_thread is not None and self.__receive_thread.is_alive():
++                return True
++            self.__receive_stop.clear()
++            with self.__state_lock:
++                self.__receive_error = None
++            self.__receive_thread = threading.Thread(
++                target=self.__receive_data,
++                name="task_serial_receive",
++                daemon=True,
++            )
++            self.__receive_thread.start()
++            self.__uart_state = 1
++            print("----------------create receive threading--------------")
++            time.sleep(.05)
++            return self.__receive_thread.is_alive()
++        except (OSError, RuntimeError, serial.SerialException) as error:
++            with self.__state_lock:
++                self.__receive_error = "receive thread start failed: %s" % error
++            print("---create_receive_threading error: %s---" % error)
++            return False
++
++
+     # 单片机自动返回数据状态位，默认为开启，如果设置关闭会影响部分读取数据功能。
+     # enable=True,底层扩展板会每隔10毫秒发送一包数据，总共四包不同数据，所以每包数据每40毫秒刷新一次。enable=False，则不发送。
+     # forever=True永久保存，=False临时作用。
+@@ -517,13 +609,15 @@
+             cmd[2] = len(cmd) - 1
+             checksum = sum(cmd, self.__COMPLEMENT) & 0xff
+             cmd.append(checksum)
+-            self.ser.write(cmd)
++            if not self.__serial_write(cmd):
++                return False
+             if self.__debug:
+                 print("motor:", cmd)
+             time.sleep(self.__delay_time)
+-        except:
+-            print('---set_motor error!---')
+-            pass
++            return True
++        except (OverflowError, TypeError, ValueError, struct.error) as error:
++            print('---set_motor error: %s---' % error)
++            return False
+ 
+ 
+     # 控制小车向前、向后、向左、向右等运动。
+@@ -545,13 +639,15 @@
+             cmd[2] = len(cmd) - 1
+             checksum = sum(cmd, self.__COMPLEMENT) & 0xff
+             cmd.append(checksum)
+-            self.ser.write(cmd)
++            if not self.__serial_write(cmd):
++                return False
+             if self.__debug:
+                 print("car_run:", cmd)
+             time.sleep(self.__delay_time)
+-        except:
+-            print('---set_car_run error!---')
+-            pass
++            return True
++        except (OverflowError, TypeError, ValueError, struct.error) as error:
++            print('---set_car_run error: %s---' % error)
++            return False
+ 
+     # 小车运动控制, 
+     # Car movement control
+@@ -571,13 +667,15 @@
+             cmd[2] = len(cmd) - 1
+             checksum = sum(cmd, self.__COMPLEMENT) & 0xff
+             cmd.append(checksum)
+-            self.ser.write(cmd)
++            if not self.__serial_write(cmd):
++                return False
+             if self.__debug:
+                 print("motion:", cmd)
+             time.sleep(self.__delay_time)
+-        except:
+-            print('---set_car_motion error!---')
+-            pass
++            return True
++        except (OverflowError, TypeError, ValueError, struct.error) as error:
++            print('---set_car_motion error: %s---' % error)
++            return False
+ 
+ 
+     # PID 参数控制，会影响set_car_motion函数控制小车的运动速度变化情况。默认情况下可不调整。
+--- a/SunriseRobotLib/__init__.py
++++ b/SunriseRobotLib/__init__.py
+@@ -1,2 +1,10 @@
+ from .SunriseRobotLib import SunriseRobot
+-from .mipi_camera import Mipi_Camera
++
++__all__ = ["SunriseRobot", "Mipi_Camera"]
++
++
++def __getattr__(name):
++    if name == "Mipi_Camera":
++        from .mipi_camera import Mipi_Camera
++        return Mipi_Camera
++    raise AttributeError("module %r has no attribute %r" % (__name__, name))

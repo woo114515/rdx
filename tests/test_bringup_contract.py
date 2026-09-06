@@ -16,6 +16,7 @@ def test_safety_configuration_fails_closed():
     assert params["use_sim_time"] is False
     assert params["footprint_verified"] is False
     assert params["emergency_stop_on_start"] is True
+    assert params["emergency_stop_timeout"] <= 0.75
     assert params["command_timeout"] <= 0.25
     assert params["scan_timeout"] <= 0.30
     assert params["max_linear_speed"] <= 0.18
@@ -40,7 +41,8 @@ def test_hardware_launch_is_minimal_and_has_no_teleop_source():
     assert "joy" not in source.lower()
     assert "keyboard" not in source.lower()
     assert 'remappings=[("scan", "/scan")]' in source
-    assert '"motion_command_topic": "/cmd_vel_safe"' in source
+    assert 'remappings=[("cmd_vel", "/cmd_vel_safe")]' in source
+    assert "motion_command_topic" not in source
 
 
 def test_bringup_declares_the_robot_installed_lidar_package():

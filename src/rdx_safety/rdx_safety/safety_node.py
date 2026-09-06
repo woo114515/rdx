@@ -13,7 +13,14 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 
-from .safety_logic import SafetyConfig, SafetyController, Scan, Velocity
+from .safety_logic import (
+    SafetyConfig,
+    SafetyController,
+    SafetyDecision,
+    Scan,
+    Velocity,
+    heartbeat_is_stale,
+)
 
 
 class SafetyNode(Node):
@@ -30,6 +37,17 @@ class SafetyNode(Node):
         self._emergency_stop = bool(
             self.get_parameter("emergency_stop_on_start").value
         )
+        self._emergency_stop_stamp: Optional[float] = None
+        self._emergency_stop_timeout = float(
+            self.get_parameter("emergency_stop_timeout").value
+        )
+        if (
+            not math.isfinite(self._emergency_stop_timeout)
+            or self._emergency_stop_timeout <= 0.0
+        ):
+            raise ValueError(
+                "emergency_stop_timeout must be finite and greater than zero"
+            )
 
         self._nav_command: Optional[Velocity] = None
         self._nav_stamp: Optional[float] = None
@@ -99,6 +117,7 @@ class SafetyNode(Node):
             "rotation_stop_distance": 0.35,
             "footprint_verified": False,
             "emergency_stop_on_start": True,
+            "emergency_stop_timeout": 0.75,
             "nav_topic": "/cmd_vel_nav",
             "teleop_topic": "/cmd_vel_teleop",
             "scan_topic": "/scan",
@@ -169,21 +188,36 @@ class SafetyNode(Node):
 
     def _on_emergency_stop(self, message: Bool) -> None:
         self._emergency_stop = bool(message.data)
+        self._emergency_stop_stamp = self._now()
         level = self.get_logger().warning if message.data else self.get_logger().info
         level("Emergency stop engaged." if message.data else "Emergency stop released.")
 
     def _publish_decision(self) -> None:
-        decision = self._controller.evaluate(
-            now=self._now(),
-            nav_command=self._nav_command,
-            nav_stamp=self._nav_stamp,
-            teleop_command=self._teleop_command,
-            teleop_stamp=self._teleop_stamp,
-            scan=self._scan,
-            scan_stamp=self._scan_stamp,
-            emergency_stop=self._emergency_stop,
-            footprint_verified=self._footprint_verified,
+        now = self._now()
+        release_timed_out = (
+            not self._emergency_stop
+            and heartbeat_is_stale(
+                now,
+                self._emergency_stop_stamp,
+                self._emergency_stop_timeout,
+            )
         )
+        if release_timed_out:
+            decision = SafetyDecision(
+                Velocity.zero(), "emergency_stop_timeout", "none"
+            )
+        else:
+            decision = self._controller.evaluate(
+                now=now,
+                nav_command=self._nav_command,
+                nav_stamp=self._nav_stamp,
+                teleop_command=self._teleop_command,
+                teleop_stamp=self._teleop_stamp,
+                scan=self._scan,
+                scan_stamp=self._scan_stamp,
+                emergency_stop=self._emergency_stop,
+                footprint_verified=self._footprint_verified,
+            )
         self._velocity_publisher.publish(self._to_twist(decision.velocity))
 
         ready = decision.reason in {"idle", "clear", "obstacle_slow"}

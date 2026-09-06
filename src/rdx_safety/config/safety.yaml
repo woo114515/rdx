@@ -12,6 +12,7 @@ rdx_safety:
     rotation_stop_distance: 0.35
     footprint_verified: false
     emergency_stop_on_start: true
+    emergency_stop_timeout: 0.75
     nav_topic: /cmd_vel_nav
     teleop_topic: /cmd_vel_teleop
     scan_topic: /scan

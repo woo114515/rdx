@@ -7,6 +7,7 @@ from rdx_safety.safety_logic import (
     SafetyController,
     Scan,
     Velocity,
+    heartbeat_is_stale,
 )
 
 
@@ -215,7 +216,7 @@ def test_close_obstacle_anywhere_stops_pure_rotation():
     assert decision.reason == "obstacle_stop"
 
 
-def test_infinite_ranges_mean_clear_and_nan_only_scan_is_invalid():
+def test_infinite_ranges_mean_clear_and_nan_in_motion_sector_stops():
     infinite = clear_scan(distance=math.inf)
     clear_decision = evaluate(scan=infinite)
     invalid = Scan(
@@ -229,7 +230,23 @@ def test_infinite_ranges_mean_clear_and_nan_only_scan_is_invalid():
 
     assert clear_decision.reason == "clear"
     assert invalid_decision.velocity == Velocity.zero()
-    assert invalid_decision.reason == "scan_invalid"
+    assert invalid_decision.reason == "obstacle_stop"
+
+
+@pytest.mark.parametrize("invalid_distance", [0.0, -1.0, math.nan])
+def test_invalid_near_return_in_motion_sector_fails_closed(invalid_distance):
+    decision = evaluate(scan=scan_with_obstacle(0.0, invalid_distance))
+
+    assert decision.velocity == Velocity.zero()
+    assert decision.reason == "obstacle_stop"
+
+
+@pytest.mark.parametrize(
+    ("stamp", "expected"),
+    [(None, True), (9.24, True), (9.25, False), (10.01, True)],
+)
+def test_emergency_stop_release_heartbeat_timeout(stamp, expected):
+    assert heartbeat_is_stale(NOW, stamp, 0.75) is expected
 
 
 def test_invalid_configuration_is_rejected():

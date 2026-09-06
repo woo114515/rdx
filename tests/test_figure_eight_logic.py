@@ -39,3 +39,11 @@ def test_goal_stops_and_marks_complete():
     assert tracker.update(Pose(0.0, 0.0, 0.0), 0.05) == Command()
     assert tracker.completed
     assert not tracker.active
+
+
+def test_cross_track_limit_is_configurable():
+    tracker = Tracker(Config(cross_track_limit=0.10))
+    tracker.start(Pose(0.0, 0.0, 0.0))
+
+    assert tracker.update(Pose(0.0, 0.20, 0.0), 0.05) == Command()
+    assert not tracker.active

@@ -11,14 +11,32 @@ from .figure_eight_logic import Config, Pose, Tracker
 class FigureEightNode(Node):
     PERIOD = 0.05
     TF_FAILURE_LIMIT = 0.25
-    TASK_TIMEOUT = 30.0
 
     def __init__(self):
         super().__init__("rdx_figure_eight")
+        self.declare_parameter("task_timeout", 90.0)
+        self.declare_parameter("cross_track_limit", 0.50)
+        self.task_timeout = float(self.get_parameter("task_timeout").value)
+        cross_track_limit = float(
+            self.get_parameter("cross_track_limit").value
+        )
+        if not math.isfinite(self.task_timeout) or self.task_timeout <= 0.0:
+            raise ValueError(
+                "task_timeout must be finite and greater than zero"
+            )
+        if (
+            not math.isfinite(cross_track_limit)
+            or cross_track_limit <= 0.0
+        ):
+            raise ValueError(
+                "cross_track_limit must be finite and greater than zero"
+            )
         self.publisher = self.create_publisher(Twist, "/cmd_vel_nav", 10)
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
-        self.tracker = Tracker(Config())
+        self.tracker = Tracker(
+            Config(cross_track_limit=cross_track_limit)
+        )
         self.last_tick = time.monotonic()
         self.started_at = None
         self.tf_missing_since = None
@@ -65,7 +83,7 @@ class FigureEightNode(Node):
         if not self.tracker.active:
             self.publish_zero()
             return
-        if self.started_at is not None and now-self.started_at > self.TASK_TIMEOUT:
+        if self.started_at is not None and now-self.started_at > self.task_timeout:
             self.fail("task timeout")
             return
         try:

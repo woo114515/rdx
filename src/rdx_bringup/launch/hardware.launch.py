@@ -41,7 +41,7 @@ def generate_launch_description() -> LaunchDescription:
         executable="Mcnamu_driver",
         name="driver_node",
         output="screen",
-        parameters=[{"motion_command_topic": "/cmd_vel_safe"}],
+        remappings=[("cmd_vel", "/cmd_vel_safe")],
         respawn=True,
         respawn_delay=2.0,
         condition=IfCondition(start_driver),

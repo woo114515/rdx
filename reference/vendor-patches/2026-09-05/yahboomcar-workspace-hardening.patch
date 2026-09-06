@@ -1,0 +1,1435 @@
+--- a/yahboomcar_bringup/yahboomcar_bringup/Mcnamu_driver.py
++++ b/yahboomcar_bringup/yahboomcar_bringup/Mcnamu_driver.py
+@@ -1,275 +1,342 @@
+-#!/usr/bin/env python
+-# encoding: utf-8
+-#
+-# Local safety patch: 2026-09-03
+-# Original backup:
+-#   /home/sunrise/vendor-backups/2026-09-03-before-driver-safety
+-# Changes: enforce velocity limits, reject non-finite commands, command zero
+-# at startup/shutdown, stop after stale cmd_vel, prevent duplicate instances,
+-# publish four-wheel encoder counts and tick rates, and open I2C only when
+-# RGB control is requested.
+-# Procedure and limitations are documented in the RDX repository at:
+-#   docs/vendor-driver-safety-patch.md
+-
+-#public lib
+-from math import isfinite, pi
++#!/usr/bin/env python3
++"""Fail-closed ROS adapter for the ROSMASTER serial controller."""
++
++from math import isfinite
+ import fcntl
+ import signal
+ import time
++
++from geometry_msgs.msg import Twist, TwistStamped
++import rclpy
++from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
++from rclpy.duration import Duration
++from rclpy.executors import MultiThreadedExecutor
++from rclpy.node import Node
++from sensor_msgs.msg import Imu, MagneticField
++import smbus
++from std_msgs.msg import Bool, Float32, Float32MultiArray, Int32
++from std_msgs.msg import Int32MultiArray, String
++
+ from SunriseRobotLib import SunriseRobot
+-import smbus
+-
+-#ros lib
+-import rclpy
+-from rclpy.node import Node
+-from std_msgs.msg import Int32, Float32, Bool, Int32MultiArray, Float32MultiArray
+-from geometry_msgs.msg import Twist
+-from rclpy.clock import Clock
+-from sensor_msgs.msg import Imu, MagneticField
++
+ 
+ def sanitize_motion(vx, vy, angular, x_limit, y_limit, angular_limit):
+-	values = (vx, vy, angular)
+-	if not all(isfinite(value) for value in values):
+-		raise ValueError('motion command must contain finite values')
+-	return (
+-		max(-x_limit, min(x_limit, vx)),
+-		max(-y_limit, min(y_limit, vy)),
+-		max(-angular_limit, min(angular_limit, angular)),
+-	)
+-
+-def command_is_stale(last_cmd_time, now, timeout):
+-	return last_cmd_time is None or now - last_cmd_time >= timeout
++    if not all(isfinite(value) for value in (vx, vy, angular)):
++        raise ValueError("motion command must contain finite values")
++    return (
++        max(-x_limit, min(x_limit, vx)),
++        max(-y_limit, min(y_limit, vy)),
++        max(-angular_limit, min(angular_limit, angular)),
++    )
++
++
++def command_is_stale(last_command, now, timeout):
++    return last_command is None or now - last_command >= timeout
++
+ 
+ def signed_encoder_delta(current, previous):
+-	delta = (int(current) - int(previous)) & 0xffffffff
+-	return delta - 0x100000000 if delta >= 0x80000000 else delta
++    delta = (int(current) - int(previous)) & 0xFFFFFFFF
++    return delta - 0x100000000 if delta >= 0x80000000 else delta
++
+ 
+ def encoder_tick_rates(current, previous, elapsed):
+-	if elapsed <= 0.0:
+-		raise ValueError('encoder sample interval must be positive')
+-	if previous is None:
+-		return (0.0, 0.0, 0.0, 0.0)
+-	return tuple(
+-		signed_encoder_delta(now_count, old_count) / elapsed
+-		for now_count, old_count in zip(current, previous)
+-	)
+-
+-class yahboomcar_driver(Node):
+-	def __init__(self, name):
+-		super().__init__(name)
+-		self._last_cmd_time = None
+-		self._watchdog_stopped = True
+-		self._shutting_down = False
+-		self._bus = None
+-		self._last_encoder_counts = None
+-		self._last_encoder_time = None
+-		self.RA2DE = 180 / pi
+-		self.car = SunriseRobot()
+-		self.car.set_car_type(6)
+-		self.car.create_receive_threading()
+-		self.stop_motion(3)
+-		
+-		#get parameter
+-		self.declare_parameter('imu_link', 'imu_link')
+-		self.imu_link = self.get_parameter('imu_link').get_parameter_value().string_value
+-		print (self.imu_link)
+-		
+-		self.declare_parameter('Prefix', "")
+-		self.Prefix = self.get_parameter('Prefix').get_parameter_value().string_value
+-		print (self.Prefix)
+-		
+-		self.declare_parameter('xlinear_limit', 0.3)
+-		self.xlinear_limit = self.get_parameter('xlinear_limit').get_parameter_value().double_value
+-		print (self.xlinear_limit)
+-		
+-		self.declare_parameter('ylinear_limit', 0.3)
+-		self.ylinear_limit = self.get_parameter('ylinear_limit').get_parameter_value().double_value
+-		print (self.ylinear_limit)
+-		
+-		self.declare_parameter('angular_limit', 1.0)
+-		self.angular_limit = self.get_parameter('angular_limit').get_parameter_value().double_value
+-		print(self.angular_limit)
+-		self.declare_parameter('cmd_vel_timeout', 0.25)
+-		self.cmd_vel_timeout = self.get_parameter('cmd_vel_timeout').get_parameter_value().double_value
+-		if min(self.xlinear_limit, self.ylinear_limit, self.angular_limit, self.cmd_vel_timeout) <= 0.0:
+-			raise ValueError('velocity limits and cmd_vel_timeout must be positive')
+-
+-		#create subcriber 创建订阅者
+-		self.sub_cmd_vel = self.create_subscription(Twist,"cmd_vel",self.cmd_vel_callback,1)
+-		self.sub_RGBLight = self.create_subscription(Int32,"RGBLight",self.RGBLightcallback,1)
+-		self.sub_Buzzer = self.create_subscription(Bool,"Buzzer",self.Buzzercallback,100)
+-
+-		#create publisher 创建发布者
+-		self.EdiPublisher = self.create_publisher(Float32,"edition",100)
+-		self.volPublisher = self.create_publisher(Float32,"voltage",100)
+-		self.velPublisher = self.create_publisher(Twist,"vel_raw",50)
+-		self.imuPublisher = self.create_publisher(Imu,"imu/data_raw",100)
+-		self.magPublisher = self.create_publisher(MagneticField,"imu/mag",100)
+-		self.encoderPublisher = self.create_publisher(Int32MultiArray,"motor_encoder",50)
+-		self.wheelSpeedPublisher = self.create_publisher(Float32MultiArray,"wheel_speed",50)
+-
+-		self.RGBLight_ctrl = True
+-		
+-		#create timer
+-		self.timer = self.create_timer(0.1, self.pub_data)
+-		self.safety_timer = self.create_timer(0.05, self.watchdog_callback)
+-
+-	#callback function
+-	def cmd_vel_callback(self, msg):
+-        # 小车运动控制，订阅者回调函数
+-        # Car motion control, subscriber callback function
+-		if not isinstance(msg, Twist):
+-			return
+-        # 下发线速度和角速度
+-        # Issue linear vel and angular vel
+-		try:
+-			vx, vy, angular = sanitize_motion(
+-				msg.linear.x, msg.linear.y, msg.angular.z,
+-				self.xlinear_limit, self.ylinear_limit, self.angular_limit)
+-		except ValueError:
+-			self.get_logger().error('rejected non-finite cmd_vel')
+-			self.stop_motion(3)
+-			return
+-		self.car.set_car_motion(vx, vy, angular)
+-		self._last_cmd_time = time.monotonic()
+-		self._watchdog_stopped = False
+-
+-	def stop_motion(self, repeat=1):
+-		for _ in range(max(1, repeat)):
+-			self.car.set_car_motion(0.0, 0.0, 0.0)
+-
+-	def watchdog_callback(self):
+-		if self._shutting_down:
+-			return
+-		now = time.monotonic()
+-		stale = command_is_stale(self._last_cmd_time, now, self.cmd_vel_timeout)
+-		if stale:
+-			if not self._watchdog_stopped:
+-				self.get_logger().warning('cmd_vel timeout; commanding zero velocity')
+-			self.stop_motion()
+-			self._watchdog_stopped = True
+-
+-	def destroy_node(self):
+-		self._shutting_down = True
+-		self.stop_motion(5)
+-		return super().destroy_node()
+-
+-	def RGBLightcallback(self,msg):
+-        # 流水灯控制，服务端回调函数 RGBLight control
+-		if not isinstance(msg, Int32): return
+-		if self._bus is None:
+-			self._bus = smbus.SMBus(0)
+-		# print ("RGBLight: ", msg.data)
+-		if msg.data == 5:
+-			if self.RGBLight_ctrl == True: self._bus.write_byte_data(0x0d, 0x07, 0)
+-			else: self._bus.write_byte_data(0x0d, 0x07, 1)
+-			self.RGBLight_ctrl = not self.RGBLight_ctrl
+-		else: self._bus.write_byte_data(0x0d, 0x04, msg.data)
+-
+-	def Buzzercallback(self,msg):
+-		if not isinstance(msg, Bool): return
+-		if msg.data:
+-			for i in range(3): self.car.set_beep(1)
+-		else:
+-			for i in range(3): self.car.set_beep(0)
+-
+-	#pub data
+-	def pub_data(self):
+-		time_stamp = Clock().now()
+-		imu = Imu()
+-		twist = Twist()
+-		battery = Float32()
+-		edition = Float32()
+-		mag = MagneticField()
+-		encoder_msg = Int32MultiArray()
+-		wheel_speed_msg = Float32MultiArray()
+-		
+-		edition.data = self.car.get_version() * 1.0
+-		battery.data = self.car.get_battery_voltage() * 1.0
+-
+-		ax, ay, az = self.car.get_accelerometer_data()
+-		ax_copy, ay_copy, az_copy = ax, ay, az
+-		ax, ay, az = -ax_copy, az_copy, ay_copy
+-
+-		gx, gy, gz = self.car.get_gyroscope_data()
+-		gx_copy, gy_copy, gz_copy = gx, gy, gz
+-		gx, gy, gz = -gx_copy, gz_copy, gy_copy
+-		
+-		mx, my, mz = self.car.get_magnetometer_data()
+-		# mx_copy, my_copy, mz_copy = mx, my, mz
+-		# mx, my, mz = -mx_copy, -mz_copy, -my_copy
+-
+-		vx, vy, angular = self.car.get_motion_data()
+-		encoder_counts = tuple(self.car.get_motor_encoder())
+-		encoder_time = time.monotonic()
+-		if self._last_encoder_time is None:
+-			elapsed = 1.0
+-		else:
+-			elapsed = encoder_time - self._last_encoder_time
+-		encoder_rates = encoder_tick_rates(
+-			encoder_counts, self._last_encoder_counts, elapsed)
+-		self._last_encoder_counts = encoder_counts
+-		self._last_encoder_time = encoder_time
+-		encoder_msg.data = list(encoder_counts)
+-		wheel_speed_msg.data = list(encoder_rates)
+-
+-		# 发布陀螺仪的数据
+-		# Publish gyroscope data
+-		imu.header.stamp = time_stamp.to_msg()
+-		imu.header.frame_id = self.imu_link
+-		imu.linear_acceleration.x = ax * 1.0
+-		imu.linear_acceleration.y = ay * 1.0
+-		imu.linear_acceleration.z = az * 1.0
+-		imu.angular_velocity.x = gx * 1.0
+-		imu.angular_velocity.y = gy * 1.0
+-		imu.angular_velocity.z = gz * 1.0
+-
+-		mag.header.stamp = time_stamp.to_msg()
+-		mag.header.frame_id = self.imu_link
+-		mag.magnetic_field.x = mx * 1.0
+-		mag.magnetic_field.y = my * 1.0
+-		mag.magnetic_field.z = mz * 1.0
+-		
+-		# 将小车当前的线速度和角速度发布出去
+-		# Publish the current linear vel and angular vel of the car
+-		twist.linear.x = vx * 1.0
+-		twist.linear.y = vy * 1.0
+-		twist.angular.z = angular * 1.0
+-
+-		# print("ax: %.5f, ay: %.5f, az: %.5f" % (ax, ay, az))
+-		# print("gx: %.5f, gy: %.5f, gz: %.5f" % (gx, gy, gz))
+-		# print("mx: %.5f, my: %.5f, mz: %.5f" % (mx, my, mz))
+-		# print("vx: {}, vy: {}, angular: {}".format(twist.linear.x, twist.linear.y, twist.angular.z))
+-
+-		self.EdiPublisher.publish(edition)
+-		self.volPublisher.publish(battery)
+-		self.imuPublisher.publish(imu)
+-		self.magPublisher.publish(mag)
+-		self.velPublisher.publish(twist)
+-		self.encoderPublisher.publish(encoder_msg)
+-		self.wheelSpeedPublisher.publish(wheel_speed_msg)
+-		
++    if elapsed <= 0.0:
++        raise ValueError("encoder sample interval must be positive")
++    if previous is None:
++        return (0.0, 0.0, 0.0, 0.0)
++    return tuple(
++        signed_encoder_delta(new, old) / elapsed
++        for new, old in zip(current, previous)
++    )
++
++
++class YahboomcarDriver(Node):
++    """Bound serial I/O and publish only fresh controller feedback."""
++
++    def __init__(self, name):
++        super().__init__(name)
++        self._last_command = None
++        self._watchdog_stopped = True
++        self._shutting_down = False
++        self._started_at = time.monotonic()
++        self._last_encoder_counts = None
++        self._last_encoder_sample = None
++        self._bus = None
++        self._rgb_light_enabled = True
++        self._command_group = MutuallyExclusiveCallbackGroup()
++        self._watchdog_group = MutuallyExclusiveCallbackGroup()
++        self._feedback_group = MutuallyExclusiveCallbackGroup()
++
++        self._declare_parameters()
++        self._load_parameters()
++        self.car = SunriseRobot()
++        self.car.set_car_type(6)
++        if not self.car.create_receive_threading():
++            raise RuntimeError("failed to start serial receive thread")
++        if not self.stop_motion(3):
++            raise RuntimeError("failed to send startup stop command")
++
++        self.create_subscription(
++            Twist, self.motion_command_topic, self.cmd_vel_callback, 1,
++            callback_group=self._command_group,
++        )
++        self.create_subscription(Int32, "RGBLight", self.rgb_callback, 1)
++        self.create_subscription(Bool, "Buzzer", self.buzzer_callback, 10)
++        self.edition_publisher = self.create_publisher(Float32, "edition", 10)
++        self.voltage_publisher = self.create_publisher(Float32, "voltage", 10)
++        self.velocity_publisher = self.create_publisher(Twist, "vel_raw", 20)
++        self.stamped_velocity_publisher = self.create_publisher(
++            TwistStamped, "vel_raw_stamped", 20
++        )
++        self.imu_publisher = self.create_publisher(Imu, "imu/data_raw", 20)
++        self.mag_publisher = self.create_publisher(MagneticField, "imu/mag", 20)
++        self.encoder_publisher = self.create_publisher(
++            Int32MultiArray, "motor_encoder", 20
++        )
++        self.wheel_speed_publisher = self.create_publisher(
++            Float32MultiArray, "wheel_speed", 20
++        )
++        self.health_publisher = self.create_publisher(String, "driver_health", 10)
++        self.create_timer(
++            0.10, self.publish_feedback, callback_group=self._feedback_group
++        )
++        self.create_timer(
++            0.05, self.watchdog_callback, callback_group=self._watchdog_group
++        )
++
++    def _declare_parameters(self):
++        for key, value in {
++            "imu_link": "imu_link",
++            "xlinear_limit": 1.0,
++            "ylinear_limit": 1.0,
++            "angular_limit": 1.0,
++            "cmd_vel_timeout": 0.25,
++            "serial_report_timeout": 1.00,
++            "serial_startup_grace": 1.0,
++            "motion_command_topic": "/cmd_vel",
++        }.items():
++            self.declare_parameter(key, value)
++
++    def _load_parameters(self):
++        self.imu_link = str(self.get_parameter("imu_link").value)
++        self.xlinear_limit = float(self.get_parameter("xlinear_limit").value)
++        self.ylinear_limit = float(self.get_parameter("ylinear_limit").value)
++        self.angular_limit = float(self.get_parameter("angular_limit").value)
++        self.cmd_vel_timeout = float(self.get_parameter("cmd_vel_timeout").value)
++        self.serial_report_timeout = float(
++            self.get_parameter("serial_report_timeout").value
++        )
++        self.serial_startup_grace = float(
++            self.get_parameter("serial_startup_grace").value
++        )
++        self.motion_command_topic = str(
++            self.get_parameter("motion_command_topic").value
++        )
++        numeric = (
++            self.xlinear_limit, self.ylinear_limit, self.angular_limit,
++            self.cmd_vel_timeout, self.serial_report_timeout,
++            self.serial_startup_grace,
++        )
++        if not all(isfinite(value) and value > 0.0 for value in numeric):
++            raise ValueError("limits and timeouts must be finite and positive")
++        if not self.motion_command_topic.startswith("/"):
++            raise ValueError("motion_command_topic must be absolute")
++
++    def cmd_vel_callback(self, message):
++        try:
++            command = sanitize_motion(
++                message.linear.x, message.linear.y, message.angular.z,
++                self.xlinear_limit, self.ylinear_limit, self.angular_limit,
++            )
++        except ValueError as error:
++            self.get_logger().error(str(error))
++            self.stop_motion(3)
++            return
++        self._ensure_transport_healthy(require_feedback=False)
++        if not self.car.set_car_motion(*command):
++            raise RuntimeError("serial motion write failed")
++        self._last_command = time.monotonic()
++        self._watchdog_stopped = False
++
++    def stop_motion(self, repeat=1):
++        success = True
++        for _ in range(max(1, repeat)):
++            success = self.car.set_car_motion(0.0, 0.0, 0.0) and success
++        return success
++
++    def watchdog_callback(self):
++        if self._shutting_down:
++            return
++        self._ensure_transport_healthy(require_feedback=False)
++        if command_is_stale(
++            self._last_command, time.monotonic(), self.cmd_vel_timeout
++        ):
++            if not self._watchdog_stopped:
++                self.get_logger().warning(
++                    "cmd_vel timeout; commanding zero velocity"
++                )
++            if not self.stop_motion():
++                raise RuntimeError("watchdog failed to send zero velocity")
++            self._watchdog_stopped = True
++
++    @staticmethod
++    def _fresh(age, timeout):
++        return age is not None and 0.0 <= age <= timeout
++
++    @staticmethod
++    def _format_age(age):
++        return "missing" if age is None else "%.3f" % age
++
++    def _report_age(self, report_type):
++        return self.car.get_report_age(report_type)
++
++    def _ensure_transport_healthy(self, require_feedback=True):
++        alive, byte_age, error = self.car.get_receive_status()
++        grace = time.monotonic() - self._started_at <= self.serial_startup_grace
++        speed_age = self._report_age(self.car.FUNC_REPORT_SPEED)
++        encoder_age = self._report_age(self.car.FUNC_REPORT_ENCODER)
++        imu_ages = (
++            self._report_age(self.car.FUNC_REPORT_MPU_RAW),
++            self._report_age(self.car.FUNC_REPORT_ICM_RAW),
++        )
++        healthy = alive and (
++            grace or self._fresh(byte_age, self.serial_report_timeout)
++        )
++        feedback_fresh = (
++            self._fresh(speed_age, self.serial_report_timeout)
++            and self._fresh(encoder_age, self.serial_report_timeout)
++            and any(
++                self._fresh(age, self.serial_report_timeout)
++                for age in imu_ages
++            )
++        )
++        waiting_for_feedback = require_feedback and grace and not feedback_fresh
++        if require_feedback:
++            healthy = healthy and (feedback_fresh or waiting_for_feedback)
++        health = (
++            "healthy=%s;thread_alive=%s;byte_age=%s;speed_age=%s;"
++            "encoder_age=%s;error=%s"
++            % (
++                str(healthy).lower(), str(alive).lower(),
++                self._format_age(byte_age), self._format_age(speed_age),
++                self._format_age(encoder_age), error or "none",
++            )
++        )
++        if hasattr(self, "health_publisher"):
++            self.health_publisher.publish(String(data=health))
++        if not healthy:
++            return False
++        return not waiting_for_feedback
++
++    def _stamp_for_report(self, report_type):
++        age = self._report_age(report_type)
++        now = self.get_clock().now()
++        return now if age is None or age < 0.0 else now - Duration(seconds=age)
++
++    def publish_feedback(self):
++        if not self._ensure_transport_healthy(require_feedback=True):
++            return
++        speed_stamp = self._stamp_for_report(self.car.FUNC_REPORT_SPEED)
++        imu_type = self.car.FUNC_REPORT_ICM_RAW
++        if self._report_age(imu_type) is None:
++            imu_type = self.car.FUNC_REPORT_MPU_RAW
++        imu_stamp = self._stamp_for_report(imu_type)
++        encoder_age = self._report_age(self.car.FUNC_REPORT_ENCODER)
++        encoder_sample = time.monotonic() - (encoder_age or 0.0)
++
++        vx, vy, angular = self.car.get_motion_data()
++        twist = Twist()
++        twist.linear.x, twist.linear.y, twist.angular.z = vx, vy, angular
++        stamped = TwistStamped()
++        stamped.header.stamp = speed_stamp.to_msg()
++        stamped.header.frame_id = "base_footprint"
++        stamped.twist = twist
++
++        ax, ay, az = self.car.get_accelerometer_data()
++        gx, gy, gz = self.car.get_gyroscope_data()
++        mx, my, mz = self.car.get_magnetometer_data()
++        imu = Imu()
++        imu.header.stamp = imu_stamp.to_msg()
++        imu.header.frame_id = self.imu_link
++        imu.linear_acceleration.x, imu.linear_acceleration.y = -ax, az
++        imu.linear_acceleration.z = ay
++        imu.angular_velocity.x, imu.angular_velocity.y = -gx, gz
++        imu.angular_velocity.z = gy
++        mag = MagneticField()
++        mag.header = imu.header
++        mag.magnetic_field.x, mag.magnetic_field.y = mx, my
++        mag.magnetic_field.z = mz
++
++        counts = tuple(self.car.get_motor_encoder())
++        elapsed = 1.0
++        if self._last_encoder_sample is not None:
++            elapsed = encoder_sample - self._last_encoder_sample
++        rates = encoder_tick_rates(counts, self._last_encoder_counts, elapsed)
++        self._last_encoder_counts = counts
++        self._last_encoder_sample = encoder_sample
++
++        self.edition_publisher.publish(Float32(data=float(self.car.get_version())))
++        self.voltage_publisher.publish(
++            Float32(data=float(self.car.get_battery_voltage()))
++        )
++        self.velocity_publisher.publish(twist)
++        self.stamped_velocity_publisher.publish(stamped)
++        self.imu_publisher.publish(imu)
++        self.mag_publisher.publish(mag)
++        self.encoder_publisher.publish(Int32MultiArray(data=list(counts)))
++        self.wheel_speed_publisher.publish(Float32MultiArray(data=list(rates)))
++
++    def rgb_callback(self, message):
++        if self._bus is None:
++            self._bus = smbus.SMBus(0)
++        if message.data == 5:
++            value = 0 if self._rgb_light_enabled else 1
++            self._bus.write_byte_data(0x0D, 0x07, value)
++            self._rgb_light_enabled = not self._rgb_light_enabled
++        else:
++            self._bus.write_byte_data(0x0D, 0x04, message.data)
++
++    def buzzer_callback(self, message):
++        self.car.set_beep(1 if message.data else 0)
++
++    def destroy_node(self):
++        self._shutting_down = True
++        self.stop_motion(5)
++        self.car.close()
++        return super().destroy_node()
++
++
+ def _raise_keyboard_interrupt(signum, frame):
+-	raise KeyboardInterrupt
+-
+-def main():
+-	lock_file = open('/tmp/yahboomcar-mcnamu-driver.lock', 'w')
+-	try:
+-		fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-	except BlockingIOError:
+-		print('Mcnamu_driver is already running')
+-		return 1
+-	signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+-	rclpy.init()
+-	driver = None
+-	try:
+-		driver = yahboomcar_driver('driver_node')
+-		rclpy.spin(driver)
+-	except KeyboardInterrupt:
+-		pass
+-	finally:
+-		if driver is not None:
+-			driver.destroy_node()
+-		if rclpy.ok():
+-			rclpy.shutdown()
+-		
++    del signum, frame
++    raise KeyboardInterrupt
++
++
++def main(args=None):
++    lock_file = open("/tmp/yahboomcar-mcnamu-driver.lock", "w")
++    try:
++        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
++    except BlockingIOError:
++        print("Mcnamu_driver is already running")
++        return 1
++    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
++    rclpy.init(args=args)
++    driver = None
++    executor = MultiThreadedExecutor(num_threads=3)
++    try:
++        driver = YahboomcarDriver("driver_node")
++        executor.add_node(driver)
++        executor.spin()
++    except KeyboardInterrupt:
++        pass
++    finally:
++        if driver is not None:
++            executor.remove_node(driver)
++            driver.destroy_node()
++        executor.shutdown()
++        if rclpy.ok():
++            rclpy.shutdown()
++
++
++if __name__ == "__main__":
++    main()
+--- a/yahboomcar_bringup/yahboomcar_bringup/calibrate_angular.py
++++ b/yahboomcar_bringup/yahboomcar_bringup/calibrate_angular.py
+@@ -1,118 +1,118 @@
++#!/usr/bin/env python3
++"""Fail-closed angular odometry calibration tool."""
++
++import math
++import time
++
++from geometry_msgs.msg import Twist
+ import rclpy
+ from rclpy.node import Node
+-from geometry_msgs.msg import Twist, Point
+-from tf2_ros.buffer import Buffer
+-from tf2_ros.transform_listener import TransformListener
+-from math import copysign, radians
+-from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
++from tf2_ros import Buffer, TransformException, TransformListener
+ 
+-import PyKDL
+-from math import pi
+ 
+-class Calibrateangular(Node):
+-    def __init__(self,name):
+-        super().__init__(name)
+-        #create a spublisher
+-        self.cmd_vel = self.create_publisher(Twist,"/cmd_vel",5)
++class CalibrateAngular(Node):
++    def __init__(self):
++        super().__init__("calibrate_angular")
++        self.publisher = self.create_publisher(Twist, "/cmd_vel", 10)
++        for name, value in {
++            "start_test": False,
++            "direction": 1.0,
++            "test_angle": 90.0,
++            "speed": 0.15,
++            "tolerance": 2.0,
++            "odom_angular_scale_correction": 1.0,
++            "task_timeout": 30.0,
++            "base_frame": "base_footprint",
++            "odom_frame": "odom",
++        }.items():
++            self.declare_parameter(name, value)
++        self.buffer = Buffer()
++        self.listener = TransformListener(self.buffer, self)
++        self.active = False
++        self.started_at = None
++        self.previous_yaw = None
++        self.accumulated = 0.0
++        self.create_timer(0.05, self.tick)
+ 
+-        #declare parameters
+-        self.declare_parameter('start_test',False)        
+-        self.declare_parameter('direction',1.0)
+-        self.declare_parameter('test_angle',360.0)
+-        self.declare_parameter('speed',2.0)
+-        self.declare_parameter('tolerance',1.5)
+-        self.declare_parameter('odom_angular_scale_correction',1.0)      
+-        self.declare_parameter('base_frame','base_footprint')
+-        self.declare_parameter('odom_frame','odom')
+-        self.get_param()
+-        
+-        #init the tf listener
+-        self.tf_buffer = Buffer()
+-        self.tf_listener = TransformListener(self.tf_buffer, self)
+-        self.position = Point()
+-        self.x_start = self.position.x
+-        self.y_start = self.position.y
+-        self.first_angle = 0
+-        self.reverse = 1
+-        self.turn_angle = 0
++    @staticmethod
++    def normalize(angle):
++        return math.atan2(math.sin(angle), math.cos(angle))
+ 
+-        print ("finish init work")         
+-        #create timer 
+-        self.timer = self.create_timer(0.05, self.on_timer)
+-    
+-    def get_param(self):
+-        self.start_test = self.get_parameter('start_test').get_parameter_value().bool_value
+-        self.direction = self.get_parameter('direction').get_parameter_value().double_value
+-        self.test_angle = self.get_parameter('test_angle').get_parameter_value().double_value
+-        self.test_angle = radians(self.test_angle)  # angle to radians 角度转成弧度
+-        self.speed = self.get_parameter('speed').get_parameter_value().double_value
+-        self.tolerance = self.get_parameter('tolerance').get_parameter_value().double_value
+-        self.odom_angular_scale_correction = self.get_parameter('odom_angular_scale_correction').get_parameter_value().double_value
+-        self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
+-        self.odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
++    def yaw(self):
++        transform = self.buffer.lookup_transform(
++            str(self.get_parameter("odom_frame").value),
++            str(self.get_parameter("base_frame").value),
++            rclpy.time.Time(),
++        )
++        q = transform.transform.rotation
++        return math.atan2(
++            2.0 * (q.w * q.z + q.x * q.y),
++            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
++        )
+ 
+-    def on_timer(self):
+-        self.get_param()
+-        move_cmd = Twist()
+-        self.test_angle *= self.reverse
+-        self.error = self.test_angle - self.turn_angle
+-        if self.start_test:
+-            self.error = self.test_angle - self.turn_angle
+-            if self.start_test and (abs(self.error) > self.tolerance or self.error==0) :
+-                move_cmd.linear.x = 0.2
+-                move_cmd.angular.z = copysign(self.speed, self.error)
+-                #print("angular: ",move_cmd.angular.z)
+-                self.cmd_vel.publish(move_cmd)
+-                self.odom_angle = self.get_odom_angle() 
+-                self.delta_angle = self.odom_angular_scale_correction * self.normalize_angle(self.odom_angle - self.first_angle)
+-                #print("delta_angle: ",self.delta_angle)
+-                self.turn_angle += self.delta_angle
+-                print("turn_angle: ",self.turn_angle)
+-                self.error = self.test_angle - self.turn_angle
+-                print("error: ",self.error)
+-                self.first_angle = self.odom_angle
+-                #print("first_angle: ",self.first_angle)
+-            else:
+-                self.turn_angle = 0.0
+-                self.cmd_vel.publish(Twist())
+-                self.start_test  = rclpy.parameter.Parameter('start_test',rclpy.Parameter.Type.BOOL,False)
+-                all_new_parameters = [self.start_test]
+-                self.set_parameters(all_new_parameters)
+-                self.reverse = -self.reverse
+-                self.first_angle = 0
+-                
+-        else:
+-            self.cmd_vel.publish(Twist())
+-            self.start_test  = rclpy.parameter.Parameter('start_test',rclpy.Parameter.Type.BOOL,False)           
+-            all_new_parameters = [self.start_test]
+-            self.set_parameters(all_new_parameters)
+-            
+-    def get_odom_angle(self):
+-         try:
+-            now = rclpy.time.Time()
+-            rot = self.tf_buffer.lookup_transform(self.odom_frame,self.base_frame,now)   
+-            print("orig_rot: ",rot.transform.rotation) 
+-            cacl_rot = PyKDL.Rotation.Quaternion(rot.transform.rotation.x, rot.transform.rotation.y, rot.transform.rotation.z, rot.transform.rotation.w)
+-            #print("cacl_rot: ",cacl_rot)
+-            angle_rot = cacl_rot.GetRPY()[2]
+-            #print("angle_rot: ",angle_rot)
+-            return angle_rot
+-            
+-         except (LookupException, ConnectivityException, ExtrapolationException):
+-            self.get_logger().info('transform not ready')
+-            raise
++    def stop(self, count=3):
++        self.active = False
++        for _ in range(count):
++            self.publisher.publish(Twist())
++
++    def tick(self):
++        requested = bool(self.get_parameter("start_test").value)
++        if not requested:
++            self.stop(1)
+             return
+-    
+-    def normalize_angle(self,angle):
+-        res = angle
+-        while res > pi:
+-            res -= 2.0 * pi
+-        while res < -pi:
+-            res += 2.0 * pi
+-        return res
+-             
+-         
+-def main():
+-    rclpy.init()
+-    class_calibrateangular = Calibrateangular("calibrate_angular")
+-    rclpy.spin(class_calibrateangular)
++        direction = math.copysign(1.0, float(self.get_parameter("direction").value))
++        target = math.radians(abs(float(self.get_parameter("test_angle").value)))
++        speed = abs(float(self.get_parameter("speed").value))
++        tolerance = math.radians(abs(float(self.get_parameter("tolerance").value)))
++        scale = float(self.get_parameter("odom_angular_scale_correction").value)
++        timeout = float(self.get_parameter("task_timeout").value)
++        values = (target, speed, tolerance, scale, timeout)
++        if not all(math.isfinite(value) and value > 0.0 for value in values):
++            self.get_logger().error("invalid calibration parameter")
++            self.stop()
++            return
++        speed = min(speed, 0.20)
++        try:
++            current_yaw = self.yaw()
++        except TransformException as error:
++            self.get_logger().warning("TF unavailable; stopping: %s" % error)
++            self.stop()
++            return
++        now = time.monotonic()
++        if not self.active:
++            self.active = True
++            self.started_at = now
++            self.previous_yaw = current_yaw
++            self.accumulated = 0.0
++        if now - self.started_at > timeout:
++            self.get_logger().error("angular calibration timed out")
++            self.stop()
++            return
++        delta = self.normalize(current_yaw - self.previous_yaw) * scale
++        self.previous_yaw = current_yaw
++        self.accumulated += delta
++        remaining = target - direction * self.accumulated
++        if remaining <= tolerance:
++            self.get_logger().info("angular calibration complete")
++            self.stop(5)
++            return
++        command = Twist()
++        command.angular.z = direction * speed
++        self.publisher.publish(command)
++
++    def destroy_node(self):
++        self.stop(5)
++        return super().destroy_node()
++
++
++def main(args=None):
++    rclpy.init(args=args)
++    node = CalibrateAngular()
++    try:
++        rclpy.spin(node)
++    except KeyboardInterrupt:
++        pass
++    finally:
++        node.destroy_node()
++        if rclpy.ok():
++            rclpy.shutdown()
+--- a/yahboomcar_bringup/yahboomcar_bringup/calibrate_linear.py
++++ b/yahboomcar_bringup/yahboomcar_bringup/calibrate_linear.py
+@@ -1,96 +1,122 @@
++#!/usr/bin/env python3
++"""Fail-closed linear odometry calibration tool."""
++
++import math
++import time
++
++from geometry_msgs.msg import Twist
+ import rclpy
+ from rclpy.node import Node
+-from geometry_msgs.msg import Twist, Point
+-from tf2_ros.buffer import Buffer
+-from tf2_ros.transform_listener import TransformListener
+-from math import copysign, sqrt, pow
+-from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
++from tf2_ros import Buffer, TransformException, TransformListener
++
+ 
+ class CalibrateLinear(Node):
+-    def __init__(self,name):
+-        super().__init__(name)
+-        #create a publisher
+-        self.cmd_vel = self.create_publisher(Twist,"/cmd_vel",5)
++    def __init__(self):
++        super().__init__("calibrate_linear")
++        self.publisher = self.create_publisher(Twist, "/cmd_vel", 10)
++        for name, value in {
++            "start_test": False,
++            "axis": "x",
++            "direction": 1.0,
++            "test_distance": 1.0,
++            "speed": 0.10,
++            "tolerance": 0.02,
++            "odom_linear_scale_correction": 1.0,
++            "task_timeout": 30.0,
++            "base_frame": "base_footprint",
++            "odom_frame": "odom",
++        }.items():
++            self.declare_parameter(name, value)
++        self.buffer = Buffer()
++        self.listener = TransformListener(self.buffer, self)
++        self.active = False
++        self.started_at = None
++        self.start_pose = None
++        self.create_timer(0.05, self.tick)
+ 
+-        #declare parameters
+-        self.declare_parameter('start_test',False)
+-        self.declare_parameter('direction',1.0)        
+-        self.declare_parameter('test_distance',1.0)
+-        self.declare_parameter('speed',0.3)
+-        self.declare_parameter('tolerance',0.03)
+-        self.declare_parameter('odom_linear_scale_correction',1.0)        
+-        self.declare_parameter('base_frame','base_footprint')
+-        self.declare_parameter('odom_frame','odom')
+-        self.get_param()
++    def pose(self):
++        transform = self.buffer.lookup_transform(
++            str(self.get_parameter("odom_frame").value),
++            str(self.get_parameter("base_frame").value),
++            rclpy.time.Time(),
++        )
++        t = transform.transform.translation
++        q = transform.transform.rotation
++        yaw = math.atan2(
++            2.0 * (q.w * q.z + q.x * q.y),
++            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
++        )
++        return t.x, t.y, yaw
+ 
+-        #init the tf listener
+-        self.tf_buffer = Buffer()
+-        self.tf_listener = TransformListener(self.tf_buffer, self)
++    def stop(self, count=3):
++        self.active = False
++        for _ in range(count):
++            self.publisher.publish(Twist())
+ 
+-        self.position = Point()
+-        self.x_start = self.position.x
+-        self.y_start = self.position.y
+-        
+-        print ("finish init work")
+-        #create timer 
+-        self.timer = self.create_timer(0.05, self.on_timer)
++    def tick(self):
++        if not bool(self.get_parameter("start_test").value):
++            self.stop(1)
++            return
++        axis = str(self.get_parameter("axis").value).lower()
++        direction = math.copysign(1.0, float(self.get_parameter("direction").value))
++        distance = abs(float(self.get_parameter("test_distance").value))
++        speed = abs(float(self.get_parameter("speed").value))
++        tolerance = abs(float(self.get_parameter("tolerance").value))
++        scale = float(self.get_parameter("odom_linear_scale_correction").value)
++        timeout = float(self.get_parameter("task_timeout").value)
++        values = (distance, speed, tolerance, scale, timeout)
++        if axis not in {"x", "y"} or not all(
++            math.isfinite(value) and value > 0.0 for value in values
++        ):
++            self.get_logger().error("invalid calibration parameter")
++            self.stop()
++            return
++        speed = min(speed, 0.18)
++        try:
++            current = self.pose()
++        except TransformException as error:
++            self.get_logger().warning("TF unavailable; stopping: %s" % error)
++            self.stop()
++            return
++        now = time.monotonic()
++        if not self.active:
++            self.active = True
++            self.started_at = now
++            self.start_pose = current
++        if now - self.started_at > timeout:
++            self.get_logger().error("linear calibration timed out")
++            self.stop()
++            return
++        dx = current[0] - self.start_pose[0]
++        dy = current[1] - self.start_pose[1]
++        yaw = self.start_pose[2]
++        forward = dx * math.cos(yaw) + dy * math.sin(yaw)
++        lateral = -dx * math.sin(yaw) + dy * math.cos(yaw)
++        progress = direction * (forward if axis == "x" else lateral) * scale
++        if distance - progress <= tolerance:
++            self.get_logger().info("linear calibration complete")
++            self.stop(5)
++            return
++        command = Twist()
++        if axis == "x":
++            command.linear.x = direction * speed
++        else:
++            command.linear.y = direction * speed
++        self.publisher.publish(command)
+ 
+-    def get_param(self):
+-        self.start_test = self.get_parameter('start_test').get_parameter_value().bool_value
+-        self.direction = self.get_parameter('direction').get_parameter_value().double_value
+-        self.test_distance = self.get_parameter('test_distance').get_parameter_value().double_value
+-        self.speed = self.get_parameter('speed').get_parameter_value().double_value
+-        self.tolerance = self.get_parameter('tolerance').get_parameter_value().double_value
+-        self.odom_linear_scale_correction = self.get_parameter('odom_linear_scale_correction').get_parameter_value().double_value
+-        self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
+-        self.odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
+-        
+-    def on_timer(self):
+-        self.get_param()
+-        move_cmd = Twist()
+-        if self.start_test:
+-            self.position.x = self.get_position().transform.translation.x
+-            self.position.y = self.get_position().transform.translation.y
+-            print("self.position.x: ",self.position.x)
+-            print("self.position.y: ",self.position.y)
+-            distance = sqrt(pow((self.position.x - self.x_start), 2) +
+-                                pow((self.position.y - self.y_start), 2))
+-            distance *= self.odom_linear_scale_correction
+-            print("distance: ",distance)
+-            error = distance - self.test_distance
+-            print("error: ",error)
++    def destroy_node(self):
++        self.stop(5)
++        return super().destroy_node()
+ 
+-            if not self.start_test or abs(error) < self.tolerance:
+-                self.start_test  = rclpy.parameter.Parameter('start_test',rclpy.Parameter.Type.BOOL,False)
+-                all_new_parameters = [self.start_test]
+-                self.set_parameters(all_new_parameters)   
+-                print("done")
+-            else:
+-                if self.direction:
+-                    print("x")
+-                    move_cmd.linear.x = copysign(self.speed, -1 * error)
+-                else:
+-                    move_cmd.linear.y = copysign(self.speed, -1 * error)
+-                    print("y")
+-            self.cmd_vel.publish(move_cmd)
+-        else:
+-            self.x_start = self.get_position().transform.translation.x
+-            self.y_start = self.get_position().transform.translation.y
+-            print("self.x_start: ",self.x_start)
+-            print("self.y_start:",self.y_start)
+-            self.cmd_vel.publish(Twist()) 
+-     
+-    def get_position(self):
+-         try:
+-            now = rclpy.time.Time()
+-            trans = self.tf_buffer.lookup_transform(self.odom_frame,self.base_frame,now)   
+-            return trans       
+-         except (LookupException, ConnectivityException, ExtrapolationException):
+-            self.get_logger().info('transform not ready')
+-            raise
+-            return
+-         
+-def main():
+-    rclpy.init()
+-    class_calibratelinear = CalibrateLinear("calibrate_linear")
+-    rclpy.spin(class_calibratelinear)
++
++def main(args=None):
++    rclpy.init(args=args)
++    node = CalibrateLinear()
++    try:
++        rclpy.spin(node)
++    except KeyboardInterrupt:
++        pass
++    finally:
++        node.destroy_node()
++        if rclpy.ok():
++            rclpy.shutdown()
+--- a/yahboomcar_base_node/src/base_node.cpp
++++ b/yahboomcar_base_node/src/base_node.cpp
+@@ -1,153 +1,142 @@
+-#include <geometry_msgs/msg/transform_stamped.hpp>
+-#include "geometry_msgs/msg/twist.hpp"
+-#include "nav_msgs/msg/odometry.hpp"
+-
+-#include <rclcpp/rclcpp.hpp>
+-#include <tf2/LinearMath/Quaternion.h>
+-#include <tf2_ros/transform_broadcaster.h>
+-
++#include <array>
++#include <cmath>
++#include <functional>
+ #include <memory>
++#include <stdexcept>
+ #include <string>
+ 
+-#include <geometry_msgs/msg/transform_stamped.hpp>
++#include "geometry_msgs/msg/transform_stamped.hpp"
++#include "geometry_msgs/msg/twist_stamped.hpp"
++#include "nav_msgs/msg/odometry.hpp"
++#include "rclcpp/rclcpp.hpp"
++#include "tf2/LinearMath/Quaternion.h"
++#include "tf2_ros/transform_broadcaster.h"
+ 
+-#include <rclcpp/rclcpp.hpp>
+-#include <tf2/LinearMath/Quaternion.h>
+-#include <tf2_ros/transform_broadcaster.h>
+-
+-#include <memory>
+-#include <string>
+-
+-#include <chrono>
+-#include <functional>
+-#include <memory>
+-#include <string>
+-
+-#include "rclcpp/rclcpp.hpp"
+-#include "std_msgs/msg/string.hpp"
+ using std::placeholders::_1;
+ 
+-class OdomPublisher:public rclcpp ::Node
++class OdomPublisher : public rclcpp::Node
+ {
+-   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr subscription_;
+-   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
+-   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+-   double linear_scale_x_ = 0.0 ;
+-   double linear_scale_y_ = 0.0;
+-   double vel_dt_ = 0.0;
+-   double x_pos_ = 0.0;
+-   double y_pos_ = 0.0;
+-   double heading_ = 0.0;
+-   double linear_velocity_x_ = 0.0;
+-   double linear_velocity_y_ = 0.0;
+-   double angular_velocity_z_ = 0.0;
+-   bool pub_odom_tf_ = false;
+-   std::string odom_frame = "odom";
+-   std::string base_footprint_frame = "base_footprint";
+-   rclcpp::Time last_vel_time_  ;
+-	public:
+-	  OdomPublisher()
+-	  : Node("base_node")
+-	  {            
+-            this->declare_parameter<double>("wheelbase",0.25);
+-            this->declare_parameter<std::string>("odom_frame","odom");
+-            this->declare_parameter<std::string>("base_footprint_frame","base_footprint"); 
+-            this->declare_parameter<double>("linear_scale_x",1.0);
+-            this->declare_parameter<double>("linear_scale_y",1.0);
+-            this->declare_parameter<bool>("pub_odom_tf",false);
++public:
++  OdomPublisher() : Node("base_node")
++  {
++    odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
++    base_frame_ = declare_parameter<std::string>(
++      "base_footprint_frame", "base_footprint");
++    linear_scale_x_ = declare_parameter<double>("linear_scale_x", 1.0);
++    linear_scale_y_ = declare_parameter<double>("linear_scale_y", 1.0);
++    publish_tf_ = declare_parameter<bool>("pub_odom_tf", false);
++    max_sample_interval_ = declare_parameter<double>("max_sample_interval", 0.5);
++    pose_variance_xy_ = declare_parameter<double>("pose_variance_xy", 0.02);
++    pose_variance_yaw_ = declare_parameter<double>("pose_variance_yaw", 0.05);
++    twist_variance_xy_ = declare_parameter<double>("twist_variance_xy", 0.04);
++    twist_variance_yaw_ = declare_parameter<double>("twist_variance_yaw", 0.08);
++    if (max_sample_interval_ <= 0.0) {
++      throw std::invalid_argument("max_sample_interval must be positive");
++    }
+ 
+-            this->get_parameter<double>("linear_scale_x",linear_scale_x_);
+-            this->get_parameter<double>("linear_scale_y",linear_scale_y_);
+-            this->get_parameter<bool>("pub_odom_tf",pub_odom_tf_);
+-            this->get_parameter<std::string>("odom_frame",odom_frame);
+-            this->get_parameter<std::string>("base_footprint_frame",base_footprint_frame);
+-			tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
++    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
++    subscription_ = create_subscription<geometry_msgs::msg::TwistStamped>(
++      "vel_raw_stamped", 20, std::bind(&OdomPublisher::handle_velocity, this, _1));
++    odom_publisher_ = create_publisher<nav_msgs::msg::Odometry>("odom_raw", 20);
++  }
+ 
+-			subscription_ = this->create_subscription<geometry_msgs::msg::Twist>("vel_raw",50,std::bind(&OdomPublisher::handle_vel,this,_1));
+-			odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("odom_raw", 50);
+-	  	}
+-	  	private:
+-	  	  void handle_vel(const std::shared_ptr<geometry_msgs::msg::Twist > msg)
+-	  	  {
+-	  	  	// rclcpp::Time curren_time = this->get_clock()->now();
+-	  	  	rclcpp::Time curren_time = rclcpp::Clock().now();
+-	  	  	linear_velocity_x_ = msg->linear.x * linear_scale_x_;// scale = 1
+-    		linear_velocity_y_ = msg->linear.y * linear_scale_y_;
+-			angular_velocity_z_ = msg->angular.z;
+-			vel_dt_ = (curren_time - last_vel_time_).seconds();
+-    		last_vel_time_ = curren_time;
+-    		double delta_heading = angular_velocity_z_ * vel_dt_; //radians
+-			double delta_x = (linear_velocity_x_ * cos(heading_) - linear_velocity_y_ * sin(heading_)) * vel_dt_; //m
+-    		double delta_y = (linear_velocity_x_ * sin(heading_) + linear_velocity_y_ * cos(heading_)) * vel_dt_; //m
+- 			x_pos_ += delta_x;
+-    		y_pos_ += delta_y;
+-			heading_ += delta_heading;
+-            
+-            tf2::Quaternion myQuaternion;
+-			geometry_msgs::msg::Quaternion odom_quat ; 
+-			myQuaternion.setRPY(0.00,0.00,heading_ );
++private:
++  void handle_velocity(const geometry_msgs::msg::TwistStamped::SharedPtr message)
++  {
++    const rclcpp::Time stamp(message->header.stamp, get_clock()->get_clock_type());
++    const auto & velocity = message->twist;
++    if (!std::isfinite(velocity.linear.x) ||
++      !std::isfinite(velocity.linear.y) ||
++      !std::isfinite(velocity.angular.z))
++    {
++      RCLCPP_ERROR(get_logger(), "discarding non-finite velocity feedback");
++      return;
++    }
+ 
+-            odom_quat.x = myQuaternion.x();
+-            odom_quat.y = myQuaternion.y();
+-            odom_quat.z = myQuaternion.z();
+-            odom_quat.w = myQuaternion.w();
+-  
+-			nav_msgs::msg::Odometry odom;
+-			odom.header.stamp = curren_time;
+-			odom.header.frame_id = odom_frame;
+-			odom.child_frame_id = base_footprint_frame;
+-			// robot's position in x,y and z
+-			odom.pose.pose.position.x = x_pos_;
+-			odom.pose.pose.position.y = y_pos_;
+-			odom.pose.pose.position.z = 0.0;
+-			// robot's heading in quaternion
++    double dt = 0.0;
++    if (have_previous_stamp_) {
++      dt = (stamp - previous_stamp_).seconds();
++      if (dt <= 0.0 || dt > max_sample_interval_) {
++        RCLCPP_WARN(
++          get_logger(), "discarding invalid feedback interval %.3f seconds", dt);
++        previous_stamp_ = stamp;
++        return;
++      }
++    }
++    previous_stamp_ = stamp;
++    have_previous_stamp_ = true;
+ 
+-            odom.pose.pose.orientation = odom_quat;
+-			odom.pose.covariance[0] = 0.001;
+-			odom.pose.covariance[7] = 0.001;
+-			odom.pose.covariance[35] = 0.001;
+-			// linear speed from encoders
+-			odom.twist.twist.linear.x = linear_velocity_x_;
+-			odom.twist.twist.linear.y = linear_velocity_y_;
+-			odom.twist.twist.linear.z = 0.0;
+-			odom.twist.twist.angular.x = 0.0;
+-			odom.twist.twist.angular.y = 0.0;
+-			// angular speed from encoders
+-			odom.twist.twist.angular.z = angular_velocity_z_;
+-			odom.twist.covariance[0] = 0.0001;
+-			odom.twist.covariance[7] = 0.0001;
+-			odom.twist.covariance[35] = 0.0001;
+-			odom_publisher_ -> publish(odom);
+-            if (pub_odom_tf_)
+-            {
+-			   
+-                geometry_msgs::msg::TransformStamped t;
+-                rclcpp::Time now = this->get_clock()->now();
+-                t.header.stamp = now;
+-                t.header.frame_id = odom_frame;
+-                t.child_frame_id = base_footprint_frame;
+-                t.transform.translation.x = x_pos_;
+-                t.transform.translation.y = y_pos_;
+-                t.transform.translation.z = 0.0;
+-                
+-                t.transform.rotation.x = myQuaternion.x();
+-                t.transform.rotation.y = myQuaternion.y();
+-                t.transform.rotation.z = myQuaternion.z();
+-                t.transform.rotation.w = myQuaternion.w();
+-                
+-                tf_broadcaster_->sendTransform(t);
+-                
+-            }
+-		  	}
++    const double vx = velocity.linear.x * linear_scale_x_;
++    const double vy = velocity.linear.y * linear_scale_y_;
++    const double wz = velocity.angular.z;
++    x_ += (vx * std::cos(yaw_) - vy * std::sin(yaw_)) * dt;
++    y_ += (vx * std::sin(yaw_) + vy * std::cos(yaw_)) * dt;
++    yaw_ = std::atan2(std::sin(yaw_ + wz * dt), std::cos(yaw_ + wz * dt));
+ 
++    tf2::Quaternion quaternion;
++    quaternion.setRPY(0.0, 0.0, yaw_);
++    nav_msgs::msg::Odometry odom;
++    odom.header.stamp = stamp;
++    odom.header.frame_id = odom_frame_;
++    odom.child_frame_id = base_frame_;
++    odom.pose.pose.position.x = x_;
++    odom.pose.pose.position.y = y_;
++    odom.pose.pose.orientation.x = quaternion.x();
++    odom.pose.pose.orientation.y = quaternion.y();
++    odom.pose.pose.orientation.z = quaternion.z();
++    odom.pose.pose.orientation.w = quaternion.w();
++    odom.twist.twist = velocity;
++    set_covariance(odom.pose.covariance, pose_variance_xy_, pose_variance_yaw_);
++    set_covariance(odom.twist.covariance, twist_variance_xy_, twist_variance_yaw_);
++    odom_publisher_->publish(odom);
++
++    if (publish_tf_) {
++      geometry_msgs::msg::TransformStamped transform;
++      transform.header = odom.header;
++      transform.child_frame_id = base_frame_;
++      transform.transform.translation.x = x_;
++      transform.transform.translation.y = y_;
++      transform.transform.rotation = odom.pose.pose.orientation;
++      tf_broadcaster_->sendTransform(transform);
++    }
++  }
++
++  static void set_covariance(
++    std::array<double, 36> & covariance, double xy, double yaw)
++  {
++    covariance.fill(0.0);
++    covariance[0] = xy;
++    covariance[7] = xy;
++    covariance[14] = 1.0e6;
++    covariance[21] = 1.0e6;
++    covariance[28] = 1.0e6;
++    covariance[35] = yaw;
++  }
++
++  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr subscription_;
++  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
++  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
++  std::string odom_frame_;
++  std::string base_frame_;
++  rclcpp::Time previous_stamp_{0, 0, RCL_ROS_TIME};
++  bool have_previous_stamp_{false};
++  bool publish_tf_{false};
++  double linear_scale_x_{1.0};
++  double linear_scale_y_{1.0};
++  double max_sample_interval_{0.5};
++  double pose_variance_xy_{0.02};
++  double pose_variance_yaw_{0.05};
++  double twist_variance_xy_{0.04};
++  double twist_variance_yaw_{0.08};
++  double x_{0.0};
++  double y_{0.0};
++  double yaw_{0.0};
+ };
+-
+ 
+ int main(int argc, char * argv[])
+ {
+-	rclcpp::init(argc, argv);
+-	rclcpp::spin(std::make_shared<OdomPublisher>());
+-	rclcpp::shutdown();
+-    return 0;
++  rclcpp::init(argc, argv);
++  rclcpp::spin(std::make_shared<OdomPublisher>());
++  rclcpp::shutdown();
++  return 0;
+ }
+-
+--- a/yahboomcar_ctrl/yahboomcar_ctrl/yahboom_joy.py
++++ b/yahboomcar_ctrl/yahboomcar_ctrl/yahboom_joy.py
+@@ -18,13 +18,13 @@
+ 		self.Joy_active = False
+ 		self.Buzzer_active = False
+ 		self.RGBLight_index = 0
+-		self.cancel_time = time.time()
++		self.cancel_time = time.monotonic()
+ 		self.user_name = getpass.getuser()
+ 		self.linear_Gear = 1.0
+ 		self.angular_Gear = 1.0
+ 		
+ 		#create pub
+-		self.pub_cmdVel = self.create_publisher(Twist,"cmd_vel",  10)
++		self.pub_cmdVel = self.create_publisher(Twist,"/cmd_vel", 10)
+ 		self.pub_Buzzer = self.create_publisher(Bool,"Buzzer",  1)
+ 		self.pub_RGBLight = self.create_publisher(Int32,"RGBLight" , 1)
+ 		self.pub_JoyState = self.create_publisher(Bool,"JoyState",  10)
+@@ -35,7 +35,7 @@
+ 		#declare parameter and get the value
+ 		self.declare_parameter('xspeed_limit',1.0)
+ 		self.declare_parameter('yspeed_limit',1.0)
+-		self.declare_parameter('angular_speed_limit',5.0)
++		self.declare_parameter('angular_speed_limit',0.6)
+ 		self.xspeed_limit = self.get_parameter('xspeed_limit').get_parameter_value().double_value
+ 		self.yspeed_limit = self.get_parameter('yspeed_limit').get_parameter_value().double_value
+ 		self.angular_speed_limit = self.get_parameter('angular_speed_limit').get_parameter_value().double_value
+@@ -43,8 +43,13 @@
+ 		
+ 	def buttonCallback(self,joy_data):
+ 		if not isinstance(joy_data, Joy): return
+-		if self.user_name == "root": self.user_sunrise(joy_data)
+-		else: self.user_pc(joy_data)
++		try:
++			if self.user_name == "root": self.user_sunrise(joy_data)
++			else: self.user_pc(joy_data)
++		except IndexError:
++			self.get_logger().error("joystick layout is incomplete; stopping")
++			for _ in range(5):
++				self.pub_cmdVel.publish(Twist())
+ 		
+ 	def user_sunrise(self, joy_data):
+ 		# Cancel
+@@ -131,14 +136,16 @@
+ 		twist.linear.x = xlinear_speed
+ 		twist.linear.y = ylinear_speed
+ 		twist.angular.z = angular_speed
+-		for i in range(3): self.pub_cmdVel.publish(twist)
++		if self.Joy_active:
++			for _ in range(3):
++				self.pub_cmdVel.publish(twist)
+         
+ 	def filter_data(self, value):
+ 		if abs(value) < 0.2: value = 0
+ 		return value
+ 		
+ 	def cancel_nav(self):
+-		now_time = time.time()
++		now_time = time.monotonic()
+ 		if now_time - self.cancel_time > 1:
+ 			Joy_ctrl = Bool()
+ 			self.Joy_active = not self.Joy_active
+@@ -151,5 +158,14 @@
+ def main():
+ 	rclpy.init()
+ 	joy_ctrl = JoyTeleop('joy_ctrl')
+-	rclpy.spin(joy_ctrl)		
++	try:
++		rclpy.spin(joy_ctrl)
++	except KeyboardInterrupt:
++		pass
++	finally:
++		for _ in range(5):
++			joy_ctrl.pub_cmdVel.publish(Twist())
++		joy_ctrl.destroy_node()
++		if rclpy.ok():
++			rclpy.shutdown()
+ 			
+--- a/yahboomcar_ctrl/yahboomcar_ctrl/yahboom_keyboard.py
++++ b/yahboomcar_ctrl/yahboomcar_ctrl/yahboom_keyboard.py
+@@ -65,9 +65,9 @@
+ class Yahboom_Keybord(Node):
+ 	def __init__(self,name):
+ 		super().__init__(name)
+-		self.pub = self.create_publisher(Twist,'cmd_vel',1000)
++		self.pub = self.create_publisher(Twist, '/cmd_vel', 10)
+ 		self.declare_parameter("linear_speed_limit",1.0)
+-		self.declare_parameter("angular_speed_limit",5.0)
++		self.declare_parameter("angular_speed_limit",0.6)
+ 		self.linenar_speed_limit = self.get_parameter("linear_speed_limit").get_parameter_value().double_value
+ 		self.angular_speed_limit = self.get_parameter("angular_speed_limit").get_parameter_value().double_value
+ 		self.settings = termios.tcgetattr(sys.stdin)
+@@ -128,7 +128,9 @@
+ 			if not stop: yahboom_keyboard.pub.publish(twist)
+ 			if stop:yahboom_keyboard.pub.publish(Twist())
+ 	except Exception as e: print(e)
+-	finally: yahboom_keyboard.pub.publish(Twist())
++	finally:
++		for _ in range(5):
++			yahboom_keyboard.pub.publish(Twist())
+ 	termios.tcsetattr(sys.stdin, termios.TCSADRAIN, yahboom_keyboard.settings)
+ 	yahboom_keyboard.destroy_node()
+ 	rclpy.shutdown()
