@@ -80,4 +80,7 @@ cylinder_candidate_validator:
     minimum_color_observations: 5
     minimum_visible_observations: 8
     minimum_color_confidence: 0.65
+    # Freeze the first complete configured inventory. This prevents later TF
+    # drift or replacement candidate IDs from changing a valid six-object set.
+    auto_lock_when_ready: true
     transform_timeout: 0.15

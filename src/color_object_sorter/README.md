@@ -49,6 +49,10 @@ evidence become `rejected`. Lock a complete validated inventory with
 `/cylinder_validation/lock`, or clear all accumulated evidence with
 `/cylinder_validation/reset`.
 
+The validated result and validation markers use reliable, transient-local QoS.
+The final automatically locked sample is retained for late-starting planning
+and RViz subscribers instead of disappearing after its one publication.
+
 Fusion now extracts LiDAR clusters once per scan and assigns them globally, so
 one cluster cannot be reused by two visual detections. Competing detections and
 a wide merged contour spanning similarly plausible clusters are marked

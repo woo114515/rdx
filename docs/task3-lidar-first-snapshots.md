@@ -141,3 +141,27 @@ current collection and lock cycle, but are discarded after reset and must not
 be treated as permanent physical-object identities. This stationary perception
 stage is closed; the next stage is motion-free selection and visualization of a
 target, approach pose, envelope exit curve, and destination push path.
+
+The validator now locks automatically on the first frame whose validated color
+counts exactly match the configured inventory. This intentionally freezes the
+earliest complete snapshot before longer-running SLAM drift can create
+replacement candidate IDs. `/cylinder_validation/lock` remains available for
+manual operation when `auto_lock_when_ready` is disabled. Reset both the LiDAR
+snapshot and validator before collecting the next post-push snapshot. RViz and
+planning should consume `/cylinder_snapshot/validation_markers`; raw candidate
+markers remain diagnostic and may include visually rejected clutter.
+
+The locked validation output now uses reliable, transient-local QoS. This fixes
+the startup race in which the validator published its only locked sample before
+the selection planner or a command-line listener had subscribed. The complete
+motion-free pipeline can be started with:
+
+```bash
+ros2 launch cylinder_push_planner task3_planning.launch.py
+```
+
+It starts the snapshot builder, color detector, candidate validator, and
+selection planner. Camera, LiDAR, mapping, TF, and base drivers remain external
+prerequisites. The combined launch must not be run together with the individual
+snapshot or LiDAR-first validation launches, because duplicate node instances
+would process and publish the same topics.

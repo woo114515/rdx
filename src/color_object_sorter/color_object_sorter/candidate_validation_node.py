@@ -15,6 +15,7 @@ from color_object_sorter_interfaces.msg import (
 from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -51,6 +52,7 @@ class CandidateValidationNode(Node):
             "minimum_color_observations": 5,
             "minimum_visible_observations": 8,
             "minimum_color_confidence": 0.65,
+            "auto_lock_when_ready": True,
             "transform_timeout": 0.15,
         }
         for name, value in defaults.items():
@@ -65,11 +67,16 @@ class CandidateValidationNode(Node):
         self._last_output: ValidatedCylinderArray | None = None
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
+        latched = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
         self._publisher = self.create_publisher(
-            ValidatedCylinderArray, self._string("output_topic"), 10
+            ValidatedCylinderArray, self._string("output_topic"), latched
         )
         self._marker_publisher = self.create_publisher(
-            MarkerArray, self._string("marker_topic"), 10
+            MarkerArray, self._string("marker_topic"), latched
         )
         self.create_subscription(
             CylinderSnapshot,
@@ -213,6 +220,12 @@ class CandidateValidationNode(Node):
             item.color_observations = validation.color_observations
             item.state = validation.state
             output.objects.append(item)
+        if output.ready and bool(self.get_parameter("auto_lock_when_ready").value):
+            output.locked = True
+            self._locked = True
+            self.get_logger().info(
+                "Validated inventory complete; snapshot locked automatically"
+            )
         self._last_output = output
         self._publisher.publish(output)
         self._publish_markers(output)
