@@ -32,8 +32,6 @@ class ColorLidarFusionNode(Node):
         self.declare_parameter("maximum_scan_age", 0.25)
         self.declare_parameter("maximum_range_jump", 0.15)
         self.declare_parameter("minimum_cluster_points", 2)
-        self.declare_parameter("maximum_cluster_angular_span", math.radians(4.0))
-        self.declare_parameter("maximum_depth_gap", 0.35)
         self._scan: LaserScan | None = None
         self._publisher = self.create_publisher(
             LocalizedColorObjectArray,
@@ -96,16 +94,12 @@ class ColorLidarFusionNode(Node):
                 scan.range_max,
                 float(self.get_parameter("maximum_range_jump").value),
                 int(self.get_parameter("minimum_cluster_points").value),
-                float(
-                    self.get_parameter("maximum_cluster_angular_span").value
-                ),
             )
             associations = associate_one_to_one(
                 predicted_bearings,
                 half_windows,
                 clusters,
                 float(self.get_parameter("ambiguity_margin").value),
-                float(self.get_parameter("maximum_depth_gap").value),
             )
 
         for index, detected in enumerate(detections):

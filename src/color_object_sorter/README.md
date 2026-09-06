@@ -41,12 +41,6 @@ reported as `occluded`. Same-color image contours can still merge, and a fully
 hidden object cannot be recovered from a single 2D scan; these cases require a
 new viewing position and must not trigger motion.
 
-For dense layouts, candidates substantially behind the closest return in
-each visual window are removed before allocation. A range-contiguous cluster
-wider than one expected cylinder is divided before matching. These behaviors
-are configured by `maximum_depth_gap` and
-`maximum_cluster_angular_span` in `config/perception.yaml`.
-
 ## Detection viewer
 
 Run the repository-provided viewer in a graphical ROS environment:
