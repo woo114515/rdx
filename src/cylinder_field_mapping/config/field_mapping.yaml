@@ -5,9 +5,6 @@ cylinder_field_mapper:
     map_frame: map
     association_distance: 0.15
     history_size: 25
-    relocation_distance: 0.75
-    relocation_max_age: 3.0
-    stale_after: 2.0
     minimum_observations: 3
     minimum_lock_objects: 6
     cylinder_radius: 0.035
