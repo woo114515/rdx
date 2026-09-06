@@ -19,6 +19,13 @@ The current envelope changes as the map improves. The locked initial envelope
 does not change and will later be used as a keep-out region by the sorting
 planner. Its radius includes the configured physical cylinder radius.
 
+The current topic and RViz markers contain active objects only. An object that
+has not been observed for `stale_after` seconds disappears from the active map
+and current envelope, while the locked initial envelope remains unchanged. If
+a same-color object reappears within `relocation_distance` and
+`relocation_max_age`, it inherits the old cylinder ID and starts a fresh
+position history. This avoids averaging the old and new physical locations.
+
 Start after perception and the `map -> lidar_link` TF chain are available:
 
 ```bash

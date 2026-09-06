@@ -38,6 +38,9 @@ class CylinderFieldMapperNode(Node):
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("association_distance", 0.15)
         self.declare_parameter("history_size", 25)
+        self.declare_parameter("relocation_distance", 0.75)
+        self.declare_parameter("relocation_max_age", 3.0)
+        self.declare_parameter("stale_after", 2.0)
         self.declare_parameter("minimum_observations", 3)
         self.declare_parameter("minimum_lock_objects", 6)
         self.declare_parameter("cylinder_radius", 0.035)
@@ -58,7 +61,17 @@ class CylinderFieldMapperNode(Node):
             self.get_parameter("transform_timeout").value
         )
         self._map_frame = str(self.get_parameter("map_frame").value)
-        self._field = CylinderFieldMap(association_distance, history_size)
+        self._stale_after = float(self.get_parameter("stale_after").value)
+        self._field = CylinderFieldMap(
+            association_distance=association_distance,
+            history_size=history_size,
+            relocation_distance=float(
+                self.get_parameter("relocation_distance").value
+            ),
+            relocation_max_age=float(
+                self.get_parameter("relocation_max_age").value
+            ),
+        )
         self._locked_envelope: Circle | None = None
 
         self._tf_buffer = Buffer()
@@ -113,7 +126,8 @@ class CylinderFieldMapperNode(Node):
             observations.append(
                 Observation(map_x, map_y, item.color, item.confidence, stamp)
             )
-        cylinders = self._field.update(observations)
+        self._field.update(observations, stamp=stamp)
+        cylinders = self._field.active(self._stale_after)
         self._publish(message.header.stamp, cylinders)
 
     def _publish(
@@ -137,7 +151,10 @@ class CylinderFieldMapperNode(Node):
             ).to_msg()
             message.objects.append(mapped)
 
-        current = self._field.envelope(self._minimum_observations)
+        current = self._field.envelope(
+            self._minimum_observations,
+            maximum_age=self._stale_after,
+        )
         if current is not None:
             message.current_envelope_valid = True
             message.current_envelope_center = Point(x=current.x, y=current.y, z=0.0)
@@ -156,7 +173,7 @@ class CylinderFieldMapperNode(Node):
         response: Trigger.Response,
     ) -> Trigger.Response:
         del request
-        cylinders = self._field.update([])
+        cylinders = self._field.active(self._stale_after)
         eligible = [
             item
             for item in cylinders
@@ -169,7 +186,10 @@ class CylinderFieldMapperNode(Node):
                 f"currently {len(eligible)}"
             )
             return response
-        self._locked_envelope = self._field.envelope(self._minimum_observations)
+        self._locked_envelope = self._field.envelope(
+            self._minimum_observations,
+            maximum_age=self._stale_after,
+        )
         response.success = self._locked_envelope is not None
         response.message = "initial envelope locked"
         return response
