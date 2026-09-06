@@ -33,14 +33,14 @@ class CylinderFieldMapperNode(Node):
 
     def __init__(self) -> None:
         super().__init__("cylinder_field_mapper")
-        self.declare_parameter("input_topic", "/color_sorter/confirmed_objects")
+        self.declare_parameter("input_topic", "/color_sorter/confirmation_status")
         self.declare_parameter("output_topic", "/cylinder_field/objects")
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("association_distance", 0.15)
         self.declare_parameter("history_size", 25)
-        self.declare_parameter("relocation_distance", 0.75)
-        self.declare_parameter("relocation_max_age", 3.0)
-        self.declare_parameter("stale_after", 2.0)
+        self.declare_parameter("maximum_per_color", 2)
+        self.declare_parameter("occluded_after", 0.75)
+        self.declare_parameter("stale_after", 10.0)
         self.declare_parameter("minimum_observations", 3)
         self.declare_parameter("minimum_lock_objects", 6)
         self.declare_parameter("cylinder_radius", 0.035)
@@ -61,15 +61,15 @@ class CylinderFieldMapperNode(Node):
             self.get_parameter("transform_timeout").value
         )
         self._map_frame = str(self.get_parameter("map_frame").value)
+        self._occluded_after = float(
+            self.get_parameter("occluded_after").value
+        )
         self._stale_after = float(self.get_parameter("stale_after").value)
         self._field = CylinderFieldMap(
             association_distance=association_distance,
             history_size=history_size,
-            relocation_distance=float(
-                self.get_parameter("relocation_distance").value
-            ),
-            relocation_max_age=float(
-                self.get_parameter("relocation_max_age").value
+            maximum_per_color=int(
+                self.get_parameter("maximum_per_color").value
             ),
         )
         self._locked_envelope: Circle | None = None
@@ -127,7 +127,10 @@ class CylinderFieldMapperNode(Node):
                 Observation(map_x, map_y, item.color, item.confidence, stamp)
             )
         self._field.update(observations, stamp=stamp)
-        cylinders = self._field.active(self._stale_after)
+        cylinders = self._field.active(
+            self._occluded_after,
+            self._stale_after,
+        )
         self._publish(message.header.stamp, cylinders)
 
     def _publish(
@@ -149,11 +152,13 @@ class CylinderFieldMapperNode(Node):
             mapped.last_seen = Time(
                 nanoseconds=int(item.last_seen * 1_000_000_000)
             ).to_msg()
+            mapped.state = item.state
             message.objects.append(mapped)
 
         current = self._field.envelope(
             self._minimum_observations,
-            maximum_age=self._stale_after,
+            occluded_after=self._occluded_after,
+            stale_after=self._stale_after,
         )
         if current is not None:
             message.current_envelope_valid = True
@@ -173,7 +178,10 @@ class CylinderFieldMapperNode(Node):
         response: Trigger.Response,
     ) -> Trigger.Response:
         del request
-        cylinders = self._field.active(self._stale_after)
+        cylinders = self._field.active(
+            self._occluded_after,
+            self._stale_after,
+        )
         eligible = [
             item
             for item in cylinders
@@ -188,7 +196,8 @@ class CylinderFieldMapperNode(Node):
             return response
         self._locked_envelope = self._field.envelope(
             self._minimum_observations,
-            maximum_age=self._stale_after,
+            occluded_after=self._occluded_after,
+            stale_after=self._stale_after,
         )
         response.success = self._locked_envelope is not None
         response.message = "initial envelope locked"
@@ -225,6 +234,8 @@ class CylinderFieldMapperNode(Node):
             marker.scale.z = 0.25
             marker.color.a = 0.9
             marker.color.r, marker.color.g, marker.color.b = _color_rgb(item.color)
+            if item.state == "occluded":
+                marker.color.a = 0.35
             markers.markers.append(marker)
         if field.current_envelope_valid:
             markers.markers.append(
