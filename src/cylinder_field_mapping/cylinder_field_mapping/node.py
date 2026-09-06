@@ -13,6 +13,7 @@ from color_object_sorter_interfaces.msg import (
 )
 from geometry_msgs.msg import Point
 from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
 from std_srvs.srv import Trigger
@@ -272,10 +273,15 @@ def _circle_marker(
 def main(args=None) -> None:
     rclpy.init(args=args)
     node: CylinderFieldMapperNode | None = None
+    executor: MultiThreadedExecutor | None = None
     try:
         node = CylinderFieldMapperNode()
-        rclpy.spin(node)
+        executor = MultiThreadedExecutor(num_threads=2)
+        executor.add_node(node)
+        executor.spin()
     finally:
+        if executor is not None:
+            executor.shutdown()
         if node is not None:
             node.destroy_node()
         if rclpy.ok():
