@@ -78,3 +78,20 @@ Overlapping same-color cylinders that appear as one camera contour cannot
 produce two trustworthy ranges. The upstream perception pipeline marks an
 ambiguous association as unconfirmed, so it is intentionally excluded here.
 The robot must acquire another viewpoint to separate those targets.
+
+While a snapshot is collecting, `/cylinder_snapshot/filter_diagnostics`
+publishes one JSON record per scan. It reports raw clusters and rejections at
+the observation-sector, workspace, delivered-object exclusion, occupancy-map,
+nearby-fragment merge, temporal-stability, and primary-spatial-group stages.
+Use it to diagnose missing or surplus candidates without changing thresholds:
+
+```bash
+ros2 topic echo /cylinder_snapshot/filter_diagnostics --once
+```
+
+`use_map_filter` controls whether the accumulated occupancy map may veto a
+live scan cluster. Task 3 disables that veto because GMapping can lag a moved
+cylinder; the bounded forward sector, compact-cluster geometry, temporal
+tracking, spatial grouping, inventory, and visual validation remain active.
+`require_map_filter` only controls behavior when map filtering is enabled but
+no map has arrived.

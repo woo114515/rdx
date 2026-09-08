@@ -4,6 +4,7 @@ cylinder_snapshot_builder:
     map_topic: /map
     output_topic: /cylinder_snapshot/candidates
     marker_topic: /cylinder_snapshot/markers
+    filter_diagnostics_topic: /cylinder_snapshot/filter_diagnostics
     fixed_frame: map
     # Empty lists accept any count above minimum_object_count. To add or remove
     # a color, edit these lists and the matching HSV ranges in perception.yaml.
@@ -13,8 +14,8 @@ cylinder_snapshot_builder:
     inventory_colors: [blue, green, red]
     inventory_counts: [2, 2, 2]
     minimum_object_count: 1
-    minimum_observations: 6
-    association_distance: 0.12
+    minimum_observations: 4
+    association_distance: 0.15
     # Distinct physical targets are expected to be farther apart than this.
     minimum_object_separation: 0.20
     history_size: 30
@@ -28,6 +29,9 @@ cylinder_snapshot_builder:
     maximum_diameter: 0.16
     nominal_radius: 0.035
     transform_timeout: 0.15
+    # Task 3 uses a bounded forward scan sector. The accumulated SLAM map can
+    # lag moving cylinders and is therefore not used as a candidate veto.
+    use_map_filter: false
     require_map_filter: true
     map_occupancy_threshold: 50
     map_search_radius: 0.12
@@ -36,11 +40,11 @@ cylinder_snapshot_builder:
     # limits are evaluated in the live LiDAR frame before conversion to map.
     observation_min_range: 0.25
     observation_max_range: 4.0
-    observation_half_angle: 1.2217304764  # 70 degrees
+    observation_half_angle: 0.5235987756  # 30 degrees
     observation_max_lateral: 2.0
     # Neighboring targets are about 0.30 m apart. A larger link distance keeps
     # the group connected when one target is temporarily occluded.
-    maximum_group_neighbor_distance: 1.0
+    maximum_group_neighbor_distance: 0.65
     use_workspace_bounds: false
     workspace_min_x: -10.0
     workspace_max_x: 10.0

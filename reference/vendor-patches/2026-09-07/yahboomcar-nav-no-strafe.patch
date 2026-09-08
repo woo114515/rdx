@@ -1,7 +1,31 @@
 diff --git a/params/dwb_nav_params.yaml b/params/dwb_nav_params.yaml
 --- a/params/dwb_nav_params.yaml
 +++ b/params/dwb_nav_params.yaml
-@@ -162,7 +162,7 @@ controller_server:
+@@ -135,7 +135,7 @@
+     min_theta_velocity_threshold: 0.001
+     failure_tolerance: 0.3
+     progress_checker_plugin: "progress_checker"
+-    goal_checker_plugins: ["general_goal_checker"] # "precise_goal_checker"
++    goal_checker_plugins: ["general_goal_checker", "task3_goal_checker"]
+     controller_plugins: ["FollowPath"]
+ 
+     # Progress checker parameters
+@@ -155,6 +155,14 @@
+       xy_goal_tolerance: 0.25
+       yaw_goal_tolerance: 0.25
+ 
++    # Selected explicitly by Task 3 FollowPath goals. Task 2 keeps using the
++    # vendor general_goal_checker above.
++    task3_goal_checker:
++      stateful: True
++      plugin: "nav2_controller::SimpleGoalChecker"
++      xy_goal_tolerance: 0.08
++      yaw_goal_tolerance: 0.10
++
+     # DWB parameters
+     FollowPath:
+       plugin: "dwb_core::DWBLocalPlanner"
+@@ -162,7 +170,7 @@
        min_vel_x: -0.5
        min_vel_y: 0.0
        max_vel_x: 0.26
@@ -10,7 +34,7 @@ diff --git a/params/dwb_nav_params.yaml b/params/dwb_nav_params.yaml
        max_vel_theta: 1.0
        min_speed_xy: -0.5
        max_speed_xy: 0.26
-@@ -176,7 +176,7 @@ controller_server:
+@@ -176,7 +184,7 @@
        decel_lim_y: -0.5
        decel_lim_theta: -1.0
        vx_samples: 20

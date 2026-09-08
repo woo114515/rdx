@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 import rclpy
@@ -27,6 +28,7 @@ from rclpy.qos import (
 )
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
@@ -50,11 +52,12 @@ class CylinderSnapshotNode(Node):
             "scan_topic": "/scan",
             "output_topic": "/cylinder_snapshot/candidates",
             "marker_topic": "/cylinder_snapshot/markers",
+            "filter_diagnostics_topic": "/cylinder_snapshot/filter_diagnostics",
             "map_topic": "/map",
             "fixed_frame": "map",
             "minimum_object_count": 1,
-            "minimum_observations": 6,
-            "association_distance": 0.12,
+            "minimum_observations": 4,
+            "association_distance": 0.15,
             "minimum_object_separation": 0.20,
             "history_size": 30,
             "maximum_missed_updates": 5,
@@ -64,13 +67,14 @@ class CylinderSnapshotNode(Node):
             "maximum_diameter": 0.16,
             "nominal_radius": 0.035,
             "transform_timeout": 0.15,
+            "use_map_filter": False,
             "require_map_filter": True,
             "map_occupancy_threshold": 50,
             "map_search_radius": 0.12,
             "maximum_map_component_diameter": 0.20,
             "observation_min_range": 0.25,
             "observation_max_range": 4.0,
-            "observation_half_angle": 1.2217304764,
+            "observation_half_angle": 0.5235987756,
             "observation_max_lateral": 2.0,
             "maximum_group_neighbor_distance": 0.65,
             "use_workspace_bounds": False,
@@ -118,6 +122,16 @@ class CylinderSnapshotNode(Node):
         )
         self._marker_publisher = self.create_publisher(
             MarkerArray, self._string("marker_topic"), 10
+        )
+        diagnostics_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._diagnostics_publisher = self.create_publisher(
+            String,
+            self._string("filter_diagnostics_topic"),
+            diagnostics_qos,
         )
         self.create_subscription(
             LaserScan,
@@ -182,6 +196,14 @@ class CylinderSnapshotNode(Node):
                 f"Cannot transform candidate scan: {error}",
                 throttle_duration_sec=2.0,
             )
+            self._publish_filter_diagnostics(
+                scan,
+                {
+                    "status": "tf_error",
+                    "error": str(error),
+                    "map_available": self._map is not None,
+                },
+            )
             return
         extracted = extract_candidates(
             scan.ranges,
@@ -195,30 +217,66 @@ class CylinderSnapshotNode(Node):
             maximum_diameter=self._float("maximum_diameter"),
             nominal_radius=self._float("nominal_radius"),
         )
+        counts = {
+            "status": "ok",
+            "map_available": self._map is not None,
+            "raw_clusters": len(extracted),
+            "sector_rejected": 0,
+            "workspace_rejected": 0,
+            "exclusion_rejected": 0,
+            "map_rejected": 0,
+        }
         observations = []
         for item in extracted:
             if not self._inside_observation_sector(item.x, item.y):
+                counts["sector_rejected"] += 1
                 continue
             x, y = _transform_xy(item.x, item.y, transform.transform)
             if not self._inside_workspace(x, y):
+                counts["workspace_rejected"] += 1
                 continue
             if self._inside_exclusion(x, y):
+                counts["exclusion_rejected"] += 1
                 continue
             if not self._passes_map_filter(x, y):
+                counts["map_rejected"] += 1
                 continue
             observations.append((x, y, item.radius, item.confidence))
+        counts["accepted_before_merge"] = len(observations)
         observations = list(
             merge_nearby_observations(
                 observations, self._float("minimum_object_separation")
             )
         )
+        counts["merged_observations"] = len(observations)
+        counts["merged_away"] = counts["accepted_before_merge"] - len(observations)
         stamp = Time.from_msg(scan.header.stamp).nanoseconds / 1e9
-        self._accumulator.update(observations, stamp)
+        tracked = self._accumulator.update(observations, stamp)
         stable = self._accumulator.stable(self._int("minimum_observations"))
-        stable = select_primary_spatial_group(
+        selected = select_primary_spatial_group(
             stable, self._float("maximum_group_neighbor_distance")
         )
-        self._publish(scan.header.stamp, stable)
+        counts["tracked_candidates"] = len(tracked)
+        counts["unstable_tracks"] = len(tracked) - len(stable)
+        counts["stable_candidates"] = len(stable)
+        counts["group_rejected"] = len(stable) - len(selected)
+        counts["published_candidates"] = len(selected)
+        counts["expected_candidates"] = self._inventory.total
+        self._publish_filter_diagnostics(scan, counts)
+        self._publish(scan.header.stamp, selected)
+
+    def _publish_filter_diagnostics(self, scan: LaserScan, values: dict) -> None:
+        payload = {
+            "stamp": {
+                "sec": int(scan.header.stamp.sec),
+                "nanosec": int(scan.header.stamp.nanosec),
+            },
+            "scan_frame": scan.header.frame_id,
+            **values,
+        }
+        message = String()
+        message.data = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        self._diagnostics_publisher.publish(message)
 
     def _publish(self, stamp, candidates) -> None:
         message = CylinderSnapshot()
@@ -285,6 +343,8 @@ class CylinderSnapshotNode(Node):
         )
 
     def _passes_map_filter(self, x: float, y: float) -> bool:
+        if not bool(self.get_parameter("use_map_filter").value):
+            return True
         if self._map is None:
             return not bool(self.get_parameter("require_map_filter").value)
         return is_compact_map_obstacle(

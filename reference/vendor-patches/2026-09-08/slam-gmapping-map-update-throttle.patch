@@ -10,15 +10,20 @@
      std::mutex map_mutex_;
 --- a/slam_gmapping/src/slam_gmapping.cpp
 +++ b/slam_gmapping/src/slam_gmapping.cpp
-@@ -65,6 +65,7 @@
-     transform_publish_period_ = 0.05;
+@@ -62,7 +62,10 @@
+     map_frame_ = "map";
+     odom_frame_ = "odom";
+-    transform_publish_period_ = 0.05;
++    transform_publish_period_ =
++        this->declare_parameter<double>("transform_publish_period", 0.05);
  
-     map_update_interval_ = tf2::durationFromSec(0.5);
+-    map_update_interval_ = tf2::durationFromSec(0.5);
++    map_update_interval_ = tf2::durationFromSec(
++        this->declare_parameter<double>("map_update_interval", 0.5));
 +    last_map_update_ = tf2::TimePointZero;
      maxUrange_ = 80.0;  maxRange_ = 0.0;
      minimum_score_ = 0;
-     sigma_ = 0.05;
-@@ -354,8 +355,6 @@
+@@ -354,8 +357,6 @@
      if ((laser_count_ % throttle_scans_) != 0)
          return;
  
@@ -27,7 +32,7 @@
      // We can't initialize the mapper until we've got the first scan
      if(!got_first_scan_)
      {
-@@ -381,10 +380,10 @@
+@@ -381,10 +382,10 @@
          map_to_odom_mutex_.unlock();
  
          tf2::TimePoint timestamp = tf2_ros::fromMsg(scan->header.stamp);
@@ -40,3 +45,13 @@
          }
      }
  }
+@@ -513,8 +514,7 @@
+ void SlamGmapping::publishTransform()
+ {
+     map_to_odom_mutex_.lock();
+-    rclcpp::Time tf_expiration = get_clock()->now() + rclcpp::Duration(
+-            static_cast<int32_t>(static_cast<rcl_duration_value_t>(tf_delay_)), 0);
++    rclcpp::Time tf_expiration = get_clock()->now() + rclcpp::Duration::from_seconds(tf_delay_);
+     geometry_msgs::msg::TransformStamped transform;
+     transform.header.frame_id = map_frame_;
+     transform.header.stamp = tf_expiration;

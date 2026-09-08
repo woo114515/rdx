@@ -30,10 +30,12 @@ The active source was:
 ```
 
 The installed parameters request `map_update_interval: 5.0` and
-`temporalUpdate: 1.0`. However, `laserCallback()` created
-`last_map_update = TimePointZero` as a local variable on every invocation.
-Whenever GMapping accepted a scan, the elapsed-time test therefore always
-passed.
+`temporalUpdate: 1.0`. However, the vendor node did not declare or retrieve any
+ROS parameters, so the passed YAML file did not change its member variables.
+The running process therefore used its hard-coded 0.5-second map interval. In
+addition, `laserCallback()` created `last_map_update = TimePointZero` as a local
+variable on every invocation. Whenever GMapping accepted a scan, the
+elapsed-time test therefore always passed.
 
 `updateMap()` is expensive: it rebuilds a scan-matcher map by replaying the
 best particle's complete trajectory and then traverses every output grid cell.
@@ -43,9 +45,17 @@ sensor data.
 
 ## Fix and compatibility
 
-The fix adds persistent `last_map_update_` state to `SlamGmapping`, initializes
-it once, and updates it only after `updateMap()` returns. The first map remains
-immediate through the existing `!got_map_` condition.
+The first fix added persistent `last_map_update_` state to `SlamGmapping`,
+initialized it once, and updated it only after `updateMap()` returned. Further
+inspection found two remaining timing defects: the configured timing values
+were never loaded, and the conversion used to future-date `map -> odom` cast
+the default `0.05` seconds to integer zero.
+
+The completed timing fix declares and reads only `map_update_interval` and
+`transform_publish_period`, and constructs the TF offset with
+`rclcpp::Duration::from_seconds()`. The first map remains immediate through the
+existing `!got_map_` condition. Other GMapping parameters intentionally remain
+at their existing hard-coded values until they can be validated separately.
 
 The tracked vendor patch is:
 
@@ -54,8 +64,10 @@ reference/vendor-patches/2026-09-08/slam-gmapping-map-update-throttle.patch
 ```
 
 The change does not modify scan matching parameters, occupancy calculation,
-TF, `/map`, `/scan`, `/odom`, `/cmd_vel`, or the base driver. Task 2 navigation
-from a saved map uses `map_server`, AMCL, and Nav2 rather than
+TF frame topology, `/map`, `/scan`, `/odom`, `/cmd_vel`, or the base driver. It
+changes full-grid publication to the configured five-second interval and
+correctly applies the intended 50 ms timestamp offset to `map -> odom`. Task 2
+navigation from a saved map uses `map_server`, AMCL, and Nav2 rather than
 `slam_gmapping`; it is therefore outside the changed runtime path. Task 2 live
 mapping should benefit from lower callback load, with `/map` publication now
 limited by the configured five-second interval.
@@ -81,8 +93,14 @@ Rollback consists of restoring the two deployment backups, rebuilding only
 
 ## Deployment record
 
-The fix was deployed to the robot source workspace on 2026-09-08 and
-`slam_gmapping` built successfully. The pre-change files are stored under:
+The first throttle-state fix was deployed to the robot source workspace on
+2026-09-08. The parameter-loading and fractional-duration corrections were
+subsequently deployed and the package rebuilt successfully. A standalone,
+non-motion startup check confirmed that the running node reads
+`map_update_interval=5.0` and `transform_publish_period=0.05` from the installed
+YAML file.
+
+The backup for the first deployment is stored under:
 
 ```text
 /home/sunrise/vendor-backups/2026-09-08-before-gmapping-throttle/
@@ -95,7 +113,20 @@ Backup SHA256 values:
 145354266a16cee175fc0654269b89bd3a64b0cf61809c4d14ee47a2665a8aba  slam_gmapping.h
 ```
 
+The backup immediately before the completed timing fix is stored under:
+
+```text
+/home/sunrise/vendor-backups/2026-09-08-before-gmapping-timing-fix/
+```
+
+Its SHA256 values are:
+
+```text
+1e5e5c3b113f981069697102455c8c8a94ea5abc729e034b457339b7cd2c2e00  slam_gmapping.cpp
+46d14ea59d34b128913050e2a8430618a3031dcecf2da29a96b25e9896f9f30d  slam_gmapping.h
+```
+
 The stale pre-build mapping process ignored SIGINT and required termination
-after the new binary was installed. Runtime frequency and long-duration
-mapping verification remain pending until `map_gmapping_launch.py` is
-restarted; no motion command was issued during deployment.
+after the new binary was installed. No motion command was issued during that
+deployment or during the completed timing-fix deployment. Full live mapping and
+low-speed navigation regression tests remain pending.
