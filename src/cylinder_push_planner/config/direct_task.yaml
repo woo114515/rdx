@@ -5,13 +5,27 @@ cylinder_direct_task_controller:
     snapshot_topic: /cylinder_snapshot/validated_objects
     scan_topic: /scan
     cmd_vel_topic: /cmd_vel
-    # Candidate positions arrive in map, while each locked motion cycle is
-    # frozen into odom so GMapping corrections cannot move the route.
+    # Targets, keepouts, paths, and the live tracking pose must remain in map.
+    # Freezing map geometry into odom allows a later GMapping correction to
+    # rotate the physical route through the remaining cylinder group.
     fixed_frame: map
-    execution_frame: odom
+    execution_frame: map
     robot_frame: base_footprint
     odom_topic: /odom
     odom_frame: odom
+    # Path tracking and final in-place alignment use map. A full-turn gyro
+    # integral accumulated 20--30 deg of error in the field, so IMU rate is
+    # retained only to prove the chassis has stopped rotating. Odom remains
+    # the physical reference for continuity checks and the 0.15 m release.
+    inertial_heading_enabled: true
+    imu_topic: /imu/data_raw
+    imu_timeout: 0.50
+    imu_maximum_integration_gap: 0.30
+    imu_bias_sample_count: 30
+    imu_stationary_rate_limit: 0.05
+    absolute_home_heading_enabled: true
+    home_heading_sample_count: 5
+    home_heading_sample_spread: 0.035
 
     inventory_colors: [blue, green, red]
     inventory_counts: [2, 2, 2]
@@ -60,6 +74,10 @@ cylinder_direct_task_controller:
     angular_gain: 3.0
     maximum_angular_speed: 0.50
     heading_tolerance: 0.08
+    # Crossing the yaw tolerance at speed is not completion. Hold zero until
+    # the physical gyro is quiet for three controller cycles, then finalize.
+    heading_settle_rate: 0.05
+    heading_settle_required_cycles: 3
     drive_heading_limit: 0.60
     # A longer lookahead suppresses left/right steering oscillation while the
     # pure-pursuit controller follows the wide keepout curves.
@@ -72,9 +90,9 @@ cylinder_direct_task_controller:
     # Let the return controller correct accumulated base/odometry offset instead
     # of aborting solely because its lateral path deviation exceeds 0.12 m.
     return_path_deviation_guard_enabled: false
-    # Motion continuity is checked in the continuous odom frame. The allowed
-    # displacement scales with the actual odometry timestamp interval, so a
-    # delayed control callback is not mistaken for a localization jump.
+    # Motion continuity and release travel are checked in continuous odom.
+    # The allowed displacement scales with the actual odometry timestamp
+    # interval, so a delayed callback is not mistaken for a localization jump.
     odometry_timeout: 0.75
     # The vendor wheel odometry can report discontinuous position steps under
     # load. Do not abort an otherwise valid locked route solely on that test.

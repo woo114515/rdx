@@ -15,6 +15,7 @@ from cylinder_push_planner.geometry import (
     point_sets_stable,
     points_near_reference,
     point_outside_keepout,
+    polyline_clear_of_targets,
     polyline_outside_keepout,
     select_right_first,
 )
@@ -159,6 +160,23 @@ def test_polyline_detects_crossing_remaining_keepout() -> None:
     keepout = build_remaining_keepout(targets, 1, 0.10)
     assert polyline_outside_keepout(((-0.5, -0.5), (-0.2, -0.2)), keepout)
     assert not polyline_outside_keepout(((-0.5, -0.5), (1.2, 1.2)), keepout)
+
+
+def test_local_path_inside_hull_can_still_clear_each_cylinder() -> None:
+    remaining = (
+        Target(1, -1.0, 0.0, "red", 0.035),
+        Target(2, 1.0, 0.0, "blue", 0.035),
+        Target(3, 0.0, 1.5, "green", 0.035),
+    )
+    keepout = build_remaining_keepout(
+        (*remaining, Target(4, 0.0, -1.0, "red", 0.035)),
+        4,
+        0.135,
+    )
+    path = ((0.0, 0.4), (0.0, -0.5))
+
+    assert not polyline_outside_keepout(path, keepout)
+    assert polyline_clear_of_targets(path, remaining, 0.135)
 
 
 def test_push_preview_excludes_target_and_keeps_paths_outside() -> None:

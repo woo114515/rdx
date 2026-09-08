@@ -343,6 +343,38 @@ def polyline_outside_keepout(
     return point_outside_keepout(points[-1], keepout)
 
 
+def polyline_clear_of_targets(
+    points: Sequence[tuple[float, float]],
+    targets: Sequence[Target],
+    minimum_center_distance: float,
+) -> bool:
+    """Check a path against individual cylinders instead of their convex hull."""
+
+    if minimum_center_distance <= 0.0:
+        raise ValueError("minimum center distance must be positive")
+    if not points:
+        return False
+    if not all(
+        math.isfinite(value)
+        for point in points
+        for value in point
+    ):
+        return False
+    return all(
+        _distance_to_segment(
+            (target.x, target.y),
+            first,
+            second,
+        ) + 1e-6 >= minimum_center_distance
+        for first, second in zip(points, points[1:])
+        for target in targets
+    ) and all(
+        math.dist(points[-1], (target.x, target.y)) + 1e-6
+        >= minimum_center_distance
+        for target in targets
+    )
+
+
 def build_push_preview(
     targets: Sequence[Target],
     robot_x: float,
@@ -358,6 +390,7 @@ def build_push_preview(
     selection: SelectionPlan | None = None,
     delivered_exclusion_radius: float = 0.0,
     task_home: tuple[float, float, float] | None = None,
+    allow_local_approach_inside_keepout: bool = False,
 ) -> PushPreviewPlan:
     """Build a collision-screened geometric preview without commanding motion."""
 
@@ -455,21 +488,47 @@ def build_push_preview(
         path
         for path in approach_candidates
         if polyline_outside_keepout(path, keepout)
+        or (
+            allow_local_approach_inside_keepout
+            and polyline_clear_of_targets(
+                path,
+                remaining_targets,
+                robot_clearance,
+            )
+        )
     )
     if not valid_approaches:
         raise ValueError("no approach curve stays outside the remaining-cylinder keepout")
     approach_path = min(valid_approaches, key=path_length)
-    return_candidates = _curve_candidates(
-        (release_x, release_y), (home_x, home_y), keepout
+    # Retrace the already screened outbound corridors. Generating a fresh
+    # shortest curve here used to select the direct delivery-to-home chord
+    # whenever it happened to miss the remaining-cylinder hull. That route was
+    # not the route whose approach/contact/push corridors had been validated.
+    #
+    # Release backs the base away from robot_path[-1], normally onto the final
+    # portion of robot_path. Join it to the closest sampled point, retrace the
+    # push path to contact, the contact segment to staging, and finally the
+    # complete approach path to home.
+    release = (release_x, release_y)
+    release_index = min(
+        range(len(robot_path)), key=lambda index: math.dist(robot_path[index], release)
     )
-    valid_returns = tuple(
-        (robot_path[-1],) + path
-        for path in return_candidates
-        if polyline_outside_keepout((robot_path[-1],) + path, keepout)
+    return_path = _deduplicated_path(
+        (release,)
+        + tuple(reversed(robot_path[: release_index + 1]))
+        + (staging,)
+        + tuple(reversed(approach_path[:-1]))
+        + ((home_x, home_y),)
     )
-    if not valid_returns:
-        raise ValueError("no return curve stays outside the remaining-cylinder keepout")
-    return_path = min(valid_returns, key=path_length)
+    return_is_clear = polyline_outside_keepout(return_path, keepout)
+    if allow_local_approach_inside_keepout and not return_is_clear:
+        return_is_clear = polyline_clear_of_targets(
+            return_path,
+            remaining_targets,
+            robot_clearance,
+        )
+    if not return_is_clear:
+        raise ValueError("retraced return path leaves the screened outbound corridors")
     return PushPreviewPlan(
         selection=selection,
         keepout=keepout,
@@ -510,6 +569,16 @@ def _curve_candidates(start, end, keepout: Keepout):
                         center[1] + base_radius * scale * math.sin(angle),
                     )
                     output.append(_quadratic_bezier(start, control, end))
+    return tuple(output)
+
+
+def _deduplicated_path(points, tolerance: float = 1e-9):
+    """Remove adjacent duplicate waypoints without changing the route."""
+
+    output = []
+    for point in points:
+        if not output or math.dist(output[-1], point) > tolerance:
+            output.append(point)
     return tuple(output)
 
 

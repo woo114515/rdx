@@ -6,6 +6,7 @@ from dataclasses import replace
 import json
 import math
 import signal
+from collections import deque
 from statistics import median
 import threading
 import time
@@ -32,7 +33,7 @@ from rclpy.qos import (
 )
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -45,18 +46,24 @@ from .direct_cycle import (
     heading_error,
     polyline_tracking_target,
     pure_pursuit_command,
+    stitch_reacquired_return_path,
     transform_point_2d,
 )
 from .execution_safety import (
     front_target_present,
+    match_reacquisition_reference,
     obstacle_behind,
     odometry_step_is_plausible,
     retreat_motion,
-    unique_reacquisition_match,
     unexpected_obstacle_ahead,
 )
 from .geometry import Target, destination_slot, local_offset_to_map, select_right_first
 from .inventory_cycle import inventory_after_delivery
+from .inertial_heading import (
+    InertialHeadingTracker,
+    heading_is_settled,
+    stable_circular_heading,
+)
 from .task_workflow import (
     automatic_cycle_ready,
     snapshot_matches_collection,
@@ -93,13 +100,24 @@ class DirectTaskControllerNode(Node):
             "snapshot_topic": "/cylinder_snapshot/validated_objects",
             "scan_topic": "/scan",
             "cmd_vel_topic": "/cmd_vel",
-            # Perception produces map-frame targets, but a locked physical
-            # motion cycle is executed in continuous wheel odometry.
+            # Keep perceived targets, keepouts, generated paths, and the live
+            # tracking pose in one fixed frame.  Freezing map geometry into
+            # odom lets later SLAM corrections rotate a safe path through the
+            # very cylinders it was planned to avoid.
             "fixed_frame": "map",
-            "execution_frame": "odom",
+            "execution_frame": "map",
             "robot_frame": "base_footprint",
             "odom_topic": "/odom",
             "odom_frame": "odom",
+            "inertial_heading_enabled": True,
+            "imu_topic": "/imu/data_raw",
+            "imu_timeout": 0.50,
+            "imu_maximum_integration_gap": 0.30,
+            "imu_bias_sample_count": 30,
+            "imu_stationary_rate_limit": 0.05,
+            "absolute_home_heading_enabled": True,
+            "home_heading_sample_count": 5,
+            "home_heading_sample_spread": 0.035,
             "inventory_colors": ["blue", "green", "red"],
             "inventory_counts": [2, 2, 2],
             "destination_colors": ["blue", "green", "red"],
@@ -126,6 +144,8 @@ class DirectTaskControllerNode(Node):
             "angular_gain": 3.0,
             "maximum_angular_speed": 0.50,
             "heading_tolerance": 0.08,
+            "heading_settle_rate": 0.05,
+            "heading_settle_required_cycles": 3,
             "drive_heading_limit": 0.60,
             "path_lookahead": 0.15,
             "staging_tolerance": 0.05,
@@ -232,6 +252,13 @@ class DirectTaskControllerNode(Node):
             20,
             callback_group=self._sensor_callback_group,
         )
+        self.create_subscription(
+            Imu,
+            self._string("imu_topic"),
+            self._on_imu,
+            qos_profile_sensor_data,
+            callback_group=self._sensor_callback_group,
+        )
         self.create_service(Trigger, "/cylinder_task/prepare", self._prepare)
         self.create_service(Trigger, "/cylinder_task/run_once", self._run_once)
         self.create_service(Trigger, "/cylinder_task/run_all", self._run_all)
@@ -264,10 +291,19 @@ class DirectTaskControllerNode(Node):
         self._plan: DirectCyclePlan | None = None
         self._plan_targets: tuple[Target, ...] = ()
         self._target_reacquired = False
+        self._reacquisition_reference_frame = ""
+        self._reacquisition_reference_point: tuple[float, float] | None = None
         self._reacquisition_samples: list[tuple[float, float]] = []
         self._reacquisition_scan_stamp: tuple[int, int] | None = None
         self._reacquisition_reason = "waiting for a fresh scan"
         self._task_home: tuple[float, float, float] | None = None
+        self._task_home_fixed_yaw: float | None = None
+        self._home_heading_samples = deque(
+            maxlen=max(1, self._int("home_heading_sample_count"))
+        )
+        self._current_fixed_yaw: float | None = None
+        self._current_map_to_odom_yaw: float | None = None
+        self._home_heading_tf_failures = 0
         self._field_center: tuple[float, float] | None = None
         self._initial_counts: dict[str, int] = {}
         self._expected_inventory: tuple[tuple[str, ...], tuple[int, ...]] | None = None
@@ -276,6 +312,17 @@ class DirectTaskControllerNode(Node):
         self._odom_sample: tuple[float, float, float] | None = None
         self._previous_odom_sample: tuple[float, float, float] | None = None
         self._last_odom_received = 0.0
+        self._inertial_lock = threading.Lock()
+        self._inertial_heading = InertialHeadingTracker(
+            self._float("imu_maximum_integration_gap")
+        )
+        self._latest_imu_sample: tuple[float, float] | None = None
+        self._last_imu_received = 0.0
+        self._imu_gap_invalid = False
+        self._imu_bias_samples = deque(
+            maxlen=max(1, self._int("imu_bias_sample_count"))
+        )
+        self._heading_settle_cycles = 0
         self._release_origin: tuple[float, float, float] | None = None
         self._tf_failures = 0
         self._stop_burst = 0
@@ -324,6 +371,29 @@ class DirectTaskControllerNode(Node):
         )
         self._last_odom_received = self._now()
 
+    def _on_imu(self, message: Imu) -> None:
+        stamp = Time.from_msg(message.header.stamp).nanoseconds / 1e9
+        angular_rate = float(message.angular_velocity.z)
+        if not math.isfinite(stamp) or not math.isfinite(angular_rate):
+            return
+        received = self._now()
+        with self._inertial_lock:
+            self._latest_imu_sample = (stamp, angular_rate)
+            self._last_imu_received = received
+            if (
+                self._state not in ACTIVE_STATES
+                and abs(angular_rate) <= self._float("imu_stationary_rate_limit")
+            ):
+                self._imu_bias_samples.append(angular_rate)
+            if self._inertial_heading.initialized:
+                integrated = self._inertial_heading.observe(
+                    stamp,
+                    angular_rate,
+                    integrate=self._state in ACTIVE_STATES,
+                )
+                if not integrated:
+                    self._imu_gap_invalid = True
+
     def _prepare(self, request, response):
         del request
         return self._begin_preparation(response, run_all=False)
@@ -358,6 +428,15 @@ class DirectTaskControllerNode(Node):
         )
         self._terminate("preparing", reason, clear_plan=True)
         self._task_home = None
+        self._task_home_fixed_yaw = None
+        self._home_heading_samples.clear()
+        self._current_fixed_yaw = None
+        self._current_map_to_odom_yaw = None
+        self._home_heading_tf_failures = 0
+        with self._inertial_lock:
+            self._inertial_heading.clear()
+            self._imu_gap_invalid = False
+        self._heading_settle_cycles = 0
         self._field_center = None
         self._initial_counts = dict(zip(colors, counts))
         self._expected_inventory = (tuple(colors), tuple(counts))
@@ -418,8 +497,28 @@ class DirectTaskControllerNode(Node):
             raise ValueError("laser scan is missing or stale")
         if self._odometry_stale():
             raise ValueError("odometry is missing or stale")
+        if self._bool("inertial_heading_enabled"):
+            self._start_or_resume_inertial_heading(pose[2])
+        fixed_home_yaw = self._task_home_fixed_yaw
+        if (
+            fixed_home_yaw is None
+            and self._bool("absolute_home_heading_enabled")
+        ):
+            fixed_home_yaw = self._robot_yaw_in_frame(
+                self._string("fixed_frame")
+            )
+            if fixed_home_yaw is None:
+                raise ValueError("fixed-frame home heading is unavailable")
         plan = self._make_plan(pose, self._snapshot)
+        reference_frame, reference_point = self._source_target_reference(
+            self._snapshot,
+            plan.selection.target.candidate_id,
+        )
         self._plan = plan
+        if self._task_home_fixed_yaw is None:
+            self._task_home_fixed_yaw = fixed_home_yaw
+        self._reacquisition_reference_frame = reference_frame
+        self._reacquisition_reference_point = reference_point
         self._target_reacquired = False
         self._reacquisition_samples.clear()
         self._reacquisition_scan_stamp = None
@@ -543,6 +642,27 @@ class DirectTaskControllerNode(Node):
         self._plan_targets = targets
         return plan
 
+    def _source_target_reference(
+        self,
+        snapshot: ValidatedCylinderArray,
+        candidate_id: int,
+    ) -> tuple[str, tuple[float, float]]:
+        """Return the selected target in its original perception frame."""
+
+        matches = tuple(
+            item
+            for item in snapshot.objects
+            if item.state == "validated" and item.candidate_id == candidate_id
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                f"selected candidate {candidate_id} has {len(matches)} "
+                "fixed-frame references"
+            )
+        item = matches[0]
+        frame = snapshot.header.frame_id or self._string("fixed_frame")
+        return frame, (float(item.position.x), float(item.position.y))
+
     def _destination(
         self,
         color: str,
@@ -595,6 +715,16 @@ class DirectTaskControllerNode(Node):
                 f"age={self._scan_age():.3f}s"
             )
             return
+        if self._bool("inertial_heading_enabled"):
+            if self._imu_stale():
+                self._abort("IMU angular-rate input became stale")
+                return
+            with self._inertial_lock:
+                invalid_gap = self._imu_gap_invalid
+                self._imu_gap_invalid = False
+            if invalid_gap:
+                self._abort("IMU angular-rate integration gap exceeded its limit")
+                return
         pose = self._robot_pose()
         if pose is None:
             self._tf_failures += 1
@@ -681,7 +811,58 @@ class DirectTaskControllerNode(Node):
             else:
                 self._tick_return(pose)
         elif self._state == "aligning_home":
-            self._tick_yaw(pose, self._plan.home[2])
+            home_pose = pose
+            heading_stable = True
+            if self._bool("absolute_home_heading_enabled"):
+                if self._task_home_fixed_yaw is None:
+                    self._abort("fixed-frame home heading is unavailable")
+                    return
+                current_yaw = self._robot_yaw_in_frame(
+                    self._string("fixed_frame")
+                )
+                if current_yaw is None:
+                    self._home_heading_tf_failures += 1
+                    if self._home_heading_tf_failures >= self._int(
+                        "transform_failure_limit"
+                    ):
+                        self._abort("fixed-frame home heading transform was lost")
+                    return
+                self._home_heading_tf_failures = 0
+                self._home_heading_samples.append(current_yaw)
+                filtered_yaw, heading_stable = stable_circular_heading(
+                    tuple(self._home_heading_samples),
+                    self._int("home_heading_sample_count"),
+                    self._float("home_heading_sample_spread"),
+                )
+                self._current_fixed_yaw = (
+                    current_yaw if filtered_yaw is None else filtered_yaw
+                )
+                try:
+                    _, self._current_map_to_odom_yaw = self._planar_transform(
+                        self._string("fixed_frame"),
+                        self._string("odom_frame"),
+                    )
+                except ValueError:
+                    self._current_map_to_odom_yaw = None
+                home_pose = (pose[0], pose[1], self._current_fixed_yaw)
+                desired_yaw = self._task_home_fixed_yaw
+            elif self._bool("inertial_heading_enabled"):
+                corrected_yaw = self._inertial_yaw()
+                if corrected_yaw is None:
+                    self._abort("inertial heading is unavailable")
+                    return
+                # Use the integrated heading only for final in-place alignment;
+                # mixing it with TF x/y during path tracking would create an
+                # inconsistent coordinate system.
+                home_pose = (pose[0], pose[1], corrected_yaw)
+                desired_yaw = self._plan.home[2]
+            else:
+                desired_yaw = self._plan.home[2]
+            self._tick_yaw(
+                home_pose,
+                desired_yaw,
+                heading_stable=heading_stable,
+            )
 
     def _tick_run_all_wait(self) -> None:
         if not self._run_all_active:
@@ -753,39 +934,47 @@ class DirectTaskControllerNode(Node):
         ):
             self._abort("target reacquisition timed out: " + self._reacquisition_reason)
             return
-        if self._scan is None:
+        scan = self._scan
+        if scan is None:
             self._reacquisition_reason = "laser scan is unavailable"
             return
         stamp = (
-            int(self._scan.header.stamp.sec),
-            int(self._scan.header.stamp.nanosec),
+            int(scan.header.stamp.sec),
+            int(scan.header.stamp.nanosec),
         )
         if stamp == self._reacquisition_scan_stamp:
             return
         self._reacquisition_scan_stamp = stamp
         assert self._plan is not None
-        scan_frame = self._scan.header.frame_id
+        scan_frame = scan.header.frame_id
         if not scan_frame:
             self._reacquisition_reason = "laser scan frame is empty"
             return
+        reference = self._reacquisition_reference_point
+        reference_frame = self._reacquisition_reference_frame
+        if reference is None or not reference_frame:
+            self._abort("selected target fixed-frame reference is unavailable")
+            return
+        scan_time = Time.from_msg(scan.header.stamp)
         try:
-            scan_from_execution = self._planar_transform(
-                scan_frame, self._string("execution_frame")
+            scan_from_reference = self._planar_transform(
+                scan_frame,
+                reference_frame,
+                at_time=scan_time,
             )
             execution_from_scan = self._planar_transform(
-                self._string("execution_frame"), scan_frame
+                self._string("execution_frame"),
+                scan_frame,
+                at_time=scan_time,
+            )
+            execution_from_reference = self._planar_transform(
+                self._string("execution_frame"),
+                reference_frame,
+                at_time=scan_time,
             )
         except ValueError as error:
             self._reacquisition_reason = str(error)
             return
-        expected = transform_point_2d(
-            (
-                self._plan.selection.target.x,
-                self._plan.selection.target.y,
-            ),
-            *scan_from_execution,
-        )
-        scan = self._scan
         try:
             extracted = extract_candidates(
                 scan.ranges,
@@ -812,9 +1001,10 @@ class DirectTaskControllerNode(Node):
                 and math.hypot(candidate.x, candidate.y)
                 <= self._float("target_acquire_distance")
             )
-            match, reason = unique_reacquisition_match(
+            match, expected, reason = match_reacquisition_reference(
                 points,
-                expected,
+                reference,
+                *scan_from_reference,
                 self._float("target_reacquisition_maximum_correction"),
                 self._float("target_reacquisition_ambiguity_margin"),
             )
@@ -824,6 +1014,7 @@ class DirectTaskControllerNode(Node):
         self._reacquisition_reason = reason
         if match is None:
             return
+        association_error = math.dist(match, expected)
         measured = transform_point_2d(match, *execution_from_scan)
         if self._reacquisition_samples:
             center = (
@@ -851,33 +1042,69 @@ class DirectTaskControllerNode(Node):
             median(item[0] for item in self._reacquisition_samples),
             median(item[1] for item in self._reacquisition_samples),
         )
-        self._rebuild_after_reacquisition(pose, corrected)
+        self._rebuild_after_reacquisition(
+            pose,
+            corrected,
+            association_error,
+            execution_from_reference,
+        )
 
     def _rebuild_after_reacquisition(
         self,
         pose: tuple[float, float, float],
         corrected: tuple[float, float],
+        association_error: float,
+        execution_from_reference: tuple[tuple[float, float], float],
     ) -> None:
         """Rebuild only the current cycle around a corrected target centre."""
 
         assert self._plan is not None
         old_plan = self._plan
         old_target = old_plan.selection.target
-        correction = math.dist((old_target.x, old_target.y), corrected)
-        if correction > self._float("target_reacquisition_maximum_correction"):
-            self._abort(f"target correction is too large: {correction:.3f} m")
+        maximum = self._float("target_reacquisition_maximum_correction")
+        if not math.isfinite(association_error) or association_error > maximum:
+            self._abort(
+                "live-frame target association is too large: "
+                f"{association_error:.3f} m"
+            )
             return
-        target = replace(old_target, x=corrected[0], y=corrected[1])
-        targets = tuple(
-            target if item.candidate_id == target.candidate_id else item
-            for item in self._plan_targets
+        execution_shift = math.dist((old_target.x, old_target.y), corrected)
+        if self._snapshot is None:
+            self._abort("locked target snapshot is unavailable")
+            return
+        refreshed_targets = tuple(
+            Target(
+                candidate_id=item.candidate_id,
+                x=position[0],
+                y=position[1],
+                color=item.color,
+                radius=item.radius,
+            )
+            for item in self._snapshot.objects
+            if item.state == "validated"
+            for position in (
+                transform_point_2d(
+                    (item.position.x, item.position.y),
+                    *execution_from_reference,
+                ),
+            )
         )
-        if not targets or target not in targets:
+        matching_targets = tuple(
+            item
+            for item in refreshed_targets
+            if item.candidate_id == old_target.candidate_id
+        )
+        if len(matching_targets) != 1:
             self._abort("selected target is absent from the locked plan")
             return
+        target = replace(matching_targets[0], x=corrected[0], y=corrected[1])
+        targets = tuple(
+            target if item.candidate_id == target.candidate_id else item
+            for item in refreshed_targets
+        )
         selection = replace(old_plan.selection, target=target)
         try:
-            plan = build_direct_cycle(
+            local_plan = build_direct_cycle(
                 targets,
                 pose,
                 old_plan.destination,
@@ -886,9 +1113,21 @@ class DirectTaskControllerNode(Node):
                 self._float("release_distance"),
                 self._float("transit_clearance"),
                 selection=selection,
-                home=old_plan.home,
+                # The corrected leg starts at the already reached staging
+                # pose. Return to that pose first; the original, successfully
+                # traversed approach is stitched back to the task home below.
+                home=pose,
                 field_center=old_plan.field_center,
                 require_clear_corridors=self._bool("require_clear_corridors"),
+                allow_local_approach_inside_keepout=True,
+            )
+            plan = replace(
+                local_plan,
+                home=old_plan.home,
+                return_path=stitch_reacquired_return_path(
+                    local_plan.return_path,
+                    old_plan.approach_path,
+                ),
             )
         except ValueError as error:
             self._abort(f"target-corrected path is invalid: {error}")
@@ -899,7 +1138,8 @@ class DirectTaskControllerNode(Node):
         self._publish_plan(plan)
         self.get_logger().info(
             f"Reacquired candidate {target.candidate_id}; "
-            f"corrected centre by {correction:.3f} m"
+            f"live association error {association_error:.3f} m; "
+            f"execution-frame shift {execution_shift:.3f} m"
         )
         self._start_phase("aligning_approach", pose[:2])
 
@@ -981,7 +1221,14 @@ class DirectTaskControllerNode(Node):
             "releasing",
         )
         if before != self._state and self._state == "releasing":
-            self._release_origin = pose
+            # Release distance is physical wheel travel, not displacement in
+            # the SLAM map.  A map correction while reversing must not satisfy
+            # the 15 cm retreat or look like lateral/heading drift.
+            release_pose = self._robot_pose_in_frame(self._string("odom_frame"))
+            if release_pose is None:
+                self._abort("odometry transform is unavailable at release")
+                return
+            self._release_origin = release_pose
 
     def _tick_release(self, pose: tuple[float, float, float]) -> None:
         if self._now() - self._phase_started > self._float("release_timeout"):
@@ -993,7 +1240,17 @@ class DirectTaskControllerNode(Node):
         if self._release_origin is None:
             self._abort("release origin is missing")
             return
-        reverse, lateral, heading = retreat_motion(*self._release_origin, *pose)
+        odom_pose = self._robot_pose_in_frame(self._string("odom_frame"))
+        if odom_pose is None:
+            self._tf_failures += 1
+            if self._tf_failures >= self._int("transform_failure_limit"):
+                self._abort("odometry transform was lost during release")
+            return
+        self._tf_failures = 0
+        reverse, lateral, heading = retreat_motion(
+            *self._release_origin,
+            *odom_pose,
+        )
         if (
             self._bool("release_forward_motion_guard_enabled")
             and reverse < -0.02
@@ -1024,15 +1281,41 @@ class DirectTaskControllerNode(Node):
             deviation_guard=self._bool("return_path_deviation_guard_enabled"),
         )
 
-    def _tick_yaw(self, pose: tuple[float, float, float], desired: float) -> None:
+    def _tick_yaw(
+        self,
+        pose: tuple[float, float, float],
+        desired: float,
+        *,
+        heading_stable: bool = True,
+    ) -> None:
         error = heading_error(pose[2], desired)
         if abs(error) > self._float("heading_tolerance"):
+            self._heading_settle_cycles = 0
             if self._now() - self._phase_started > self._float("alignment_timeout"):
                 self._abort("home heading alignment timed out")
                 return
             self._publish_command(0.0, self._bounded_angular(error))
             return
         self._publish_zero()
+        if not heading_stable:
+            self._heading_settle_cycles = 0
+            return
+        if self._bool("inertial_heading_enabled"):
+            angular_rate = self._inertial_rate()
+            if angular_rate is None or not heading_is_settled(
+                error,
+                angular_rate,
+                self._float("heading_tolerance"),
+                self._float("heading_settle_rate"),
+            ):
+                self._heading_settle_cycles = 0
+                return
+            self._heading_settle_cycles += 1
+            if self._heading_settle_cycles < self._int(
+                "heading_settle_required_cycles"
+            ):
+                return
+        self._heading_settle_cycles = 0
         self._begin_finalize()
 
     def _begin_finalize(self) -> None:
@@ -1142,15 +1425,26 @@ class DirectTaskControllerNode(Node):
 
     def _start_phase(self, state: str, start: tuple[float, float]) -> None:
         self._state = state
+        if state == "aligning_home":
+            self._heading_settle_cycles = 0
+            self._home_heading_samples.clear()
+            self._current_fixed_yaw = None
+            self._current_map_to_odom_yaw = None
+            self._home_heading_tf_failures = 0
         self._reason = f"compact direct cycle: {state}"
         self._phase_started = self._now()
         del start
         self._publish_status()
 
     def _robot_pose(self) -> tuple[float, float, float] | None:
+        return self._robot_pose_in_frame(self._string("execution_frame"))
+
+    def _robot_pose_in_frame(
+        self, frame: str
+    ) -> tuple[float, float, float] | None:
         try:
             transform = self._tf_buffer.lookup_transform(
-                self._string("execution_frame"),
+                frame,
                 self._string("robot_frame"),
                 Time(),
                 timeout=Duration(seconds=self._float("transform_timeout")),
@@ -1164,10 +1458,72 @@ class DirectTaskControllerNode(Node):
         )
         return transform.translation.x, transform.translation.y, yaw
 
+    def _robot_yaw_in_frame(self, frame: str) -> float | None:
+        try:
+            transform = self._tf_buffer.lookup_transform(
+                frame,
+                self._string("robot_frame"),
+                Time(),
+                timeout=Duration(seconds=self._float("transform_timeout")),
+            ).transform
+        except TransformException:
+            return None
+        rotation = transform.rotation
+        return math.atan2(
+            2.0 * (rotation.w * rotation.z + rotation.x * rotation.y),
+            1.0 - 2.0 * (rotation.y**2 + rotation.z**2),
+        )
+
+    def _start_or_resume_inertial_heading(self, reference_yaw: float) -> None:
+        with self._inertial_lock:
+            if self._latest_imu_sample is None or self._imu_stale_locked():
+                raise ValueError("IMU angular-rate input is missing or stale")
+            stamp, angular_rate = self._latest_imu_sample
+            bias = (
+                median(self._imu_bias_samples) if self._imu_bias_samples else 0.0
+            )
+            if not self._inertial_heading.initialized:
+                self._inertial_heading.reset(
+                    reference_yaw,
+                    stamp,
+                    angular_rate,
+                    bias,
+                )
+            else:
+                self._inertial_heading.bias = bias
+                self._inertial_heading.observe(
+                    stamp,
+                    angular_rate,
+                    integrate=False,
+                )
+            self._imu_gap_invalid = False
+
+    def _inertial_yaw(self) -> float | None:
+        with self._inertial_lock:
+            return self._inertial_heading.yaw
+
+    def _inertial_rate(self) -> float | None:
+        with self._inertial_lock:
+            if self._latest_imu_sample is None:
+                return None
+            return self._latest_imu_sample[1] - self._inertial_heading.bias
+
+    def _imu_stale(self) -> bool:
+        with self._inertial_lock:
+            return self._imu_stale_locked()
+
+    def _imu_stale_locked(self) -> bool:
+        return (
+            self._last_imu_received <= 0.0
+            or self._now() - self._last_imu_received > self._float("imu_timeout")
+        )
+
     def _planar_transform(
         self,
         target_frame: str,
         source_frame: str,
+        *,
+        at_time: Time | None = None,
     ) -> tuple[tuple[float, float], float]:
         if target_frame == source_frame:
             return (0.0, 0.0), 0.0
@@ -1175,7 +1531,7 @@ class DirectTaskControllerNode(Node):
             transform = self._tf_buffer.lookup_transform(
                 target_frame,
                 source_frame,
-                Time(),
+                at_time if at_time is not None else Time(),
                 timeout=Duration(seconds=self._float("transform_timeout")),
             ).transform
         except TransformException as error:
@@ -1357,6 +1713,8 @@ class DirectTaskControllerNode(Node):
             self._plan = None
             self._plan_targets = ()
             self._target_reacquired = False
+            self._reacquisition_reference_frame = ""
+            self._reacquisition_reference_point = None
             self._reacquisition_samples.clear()
         self._publish_status()
 
@@ -1374,6 +1732,15 @@ class DirectTaskControllerNode(Node):
             "execution_enabled": self._bool("execution_enabled"),
             "nav2_used": False,
             "execution_frame": self._string("execution_frame"),
+            "heading_source": (
+                "map_path_with_fixed_frame_home_alignment_and_imu_settle"
+                if self._bool("absolute_home_heading_enabled")
+                else (
+                    "map_path_with_imu_home_alignment"
+                    if self._bool("inertial_heading_enabled")
+                    else "execution_frame_tf"
+                )
+            ),
             "state": self._state,
             "reason": self._reason,
             "target_id": (
@@ -1385,6 +1752,19 @@ class DirectTaskControllerNode(Node):
             "destination": list(plan.destination) if plan is not None else None,
             "delivered_count": len(self._delivered_destinations),
             "run_all_active": self._run_all_active,
+            "home_map_yaw": self._task_home_fixed_yaw,
+            "current_map_yaw": self._current_fixed_yaw,
+            "home_heading_error": (
+                heading_error(
+                    self._current_fixed_yaw,
+                    self._task_home_fixed_yaw,
+                )
+                if self._current_fixed_yaw is not None
+                and self._task_home_fixed_yaw is not None
+                else None
+            ),
+            "imu_integrated_yaw": self._inertial_yaw(),
+            "map_to_odom_yaw": self._current_map_to_odom_yaw,
         }
         self._status_publisher.publish(String(data=json.dumps(payload, sort_keys=True)))
 

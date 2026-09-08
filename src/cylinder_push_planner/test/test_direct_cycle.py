@@ -9,6 +9,7 @@ from cylinder_push_planner.direct_cycle import (
     heading_error,
     polyline_tracking_target,
     pure_pursuit_command,
+    stitch_reacquired_return_path,
     transform_point_2d,
 )
 from cylinder_push_planner.geometry import Target, select_right_first
@@ -74,6 +75,56 @@ def test_direct_cycle_routes_around_remaining_cylinder_keepout() -> None:
     assert plan.keepout_boundary
 
 
+def test_reacquired_cycle_allows_local_approach_inside_group_hull() -> None:
+    targets = (
+        target(1, -1.0, 0.0, "red"),
+        target(2, 1.0, 0.0, "blue"),
+        target(3, 0.0, 1.5, "green"),
+        target(4, 0.0, -1.0, "red"),
+    )
+    selection = select_right_first((targets[3],), 0.0, 0.4, 0.25)
+
+    with pytest.raises(ValueError, match="no approach curve"):
+        build_direct_cycle(
+            targets,
+            (0.0, 0.4, 0.0),
+            (0.0, -2.0),
+            0.25,
+            0.15,
+            0.15,
+            0.10,
+            selection=selection,
+        )
+
+    plan = build_direct_cycle(
+        targets,
+        (0.0, 0.4, 0.0),
+        (0.0, -2.0),
+        0.25,
+        0.15,
+        0.15,
+        0.10,
+        selection=selection,
+        allow_local_approach_inside_keepout=True,
+    )
+    assert plan.approach_path[0] == pytest.approx((0.0, 0.4))
+
+
+def test_reacquired_return_retraces_previous_proven_approach() -> None:
+    corrected = ((2.0, 0.0), (1.0, 0.0), (0.5, 0.1))
+    previous = ((0.0, 0.0), (0.3, 0.1), (0.5, 0.1))
+
+    path = stitch_reacquired_return_path(corrected, previous)
+
+    assert path == (
+        (2.0, 0.0),
+        (1.0, 0.0),
+        (0.5, 0.1),
+        (0.3, 0.1),
+        (0.0, 0.0),
+    )
+
+
 def test_distance_to_segment_clamps_to_endpoints() -> None:
     assert distance_to_segment((0.5, 1.0), (0.0, 0.0), (1.0, 0.0)) == 1.0
     assert distance_to_segment((2.0, 0.0), (0.0, 0.0), (1.0, 0.0)) == 1.0
@@ -137,6 +188,19 @@ def test_return_retraces_clear_segments_instead_of_cutting_across_field() -> Non
     assert distance_to_segment(
         (blocker.x, blocker.y), plan.release_end, plan.home[:2]
     ) < 0.135
+    assert plan.return_path[0] == pytest.approx(plan.release_end)
+    assert any(point == pytest.approx(plan.contact) for point in plan.return_path)
+    assert any(point == pytest.approx(plan.staging) for point in plan.return_path)
+    reversed_approach = tuple(reversed(plan.approach_path))
+    assert len(plan.return_path) >= len(reversed_approach)
+    for actual, expected in zip(
+        plan.return_path[-len(reversed_approach) :], reversed_approach
+    ):
+        assert actual == pytest.approx(expected)
+    assert sum(
+        math.dist(first, second)
+        for first, second in zip(plan.return_path, plan.return_path[1:])
+    ) > math.dist(plan.release_end, plan.home[:2])
     assert plan.return_path[-1] == plan.home[:2]
 
 

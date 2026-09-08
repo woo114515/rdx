@@ -50,6 +50,7 @@ def build_direct_cycle(
     home: tuple[float, float, float] | None = None,
     field_center: Point2D | None = None,
     require_clear_corridors: bool = True,
+    allow_local_approach_inside_keepout: bool = False,
 ) -> DirectCyclePlan:
     """Build a compact push cycle, routing around the remaining-cylinder hull."""
 
@@ -96,6 +97,9 @@ def build_direct_cycle(
             release_distance,
             selection=selection,
             task_home=home,
+            allow_local_approach_inside_keepout=(
+                allow_local_approach_inside_keepout
+            ),
         )
         contact = preview.robot_push_path[0]
         push_end = preview.robot_push_path[-1]
@@ -164,6 +168,22 @@ def build_direct_cycle(
         return_path=return_path,
         keepout_boundary=(),
     )
+
+
+def stitch_reacquired_return_path(
+    corrected_return: Sequence[Point2D],
+    previous_approach: Sequence[Point2D],
+) -> tuple[Point2D, ...]:
+    """Return via the corrected local segment, then retrace the proven approach."""
+
+    if not corrected_return or not previous_approach:
+        raise ValueError("return and previous approach paths must not be empty")
+    combined = tuple(corrected_return) + tuple(reversed(previous_approach))
+    output = []
+    for point in combined:
+        if not output or math.dist(output[-1], point) > 1e-9:
+            output.append(point)
+    return tuple(output)
 
 
 def first_corridor_blocker(

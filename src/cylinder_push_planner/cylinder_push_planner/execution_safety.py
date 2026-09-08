@@ -51,6 +51,41 @@ def unique_reacquisition_match(
     return best, f"unique cluster correction={best_error:.3f} m"
 
 
+def match_reacquisition_reference(
+    candidates: Sequence[tuple[float, float]],
+    reference: tuple[float, float],
+    observation_from_reference_translation: tuple[float, float],
+    observation_from_reference_yaw: float,
+    maximum_correction: float,
+    ambiguity_margin: float,
+) -> tuple[tuple[float, float] | None, tuple[float, float], str]:
+    """Match a fixed-frame target in the current observation frame.
+
+    A target copied into odometry when a snapshot is locked becomes stale when
+    SLAM subsequently corrects ``map -> odom``.  Transforming the immutable
+    fixed-frame reference at the observation timestamp keeps the prediction
+    and raw candidates in one coherent frame.
+    """
+
+    tx, ty = observation_from_reference_translation
+    values = (*reference, tx, ty, observation_from_reference_yaw)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("reacquisition transform must be finite")
+    cosine = math.cos(observation_from_reference_yaw)
+    sine = math.sin(observation_from_reference_yaw)
+    expected = (
+        tx + cosine * reference[0] - sine * reference[1],
+        ty + sine * reference[0] + cosine * reference[1],
+    )
+    match, reason = unique_reacquisition_match(
+        candidates,
+        expected,
+        maximum_correction,
+        ambiguity_margin,
+    )
+    return match, expected, reason
+
+
 def nav2_path_result_error_code(result: Any) -> int:
     """Return a path result error code across Nav2 Humble variants.
 

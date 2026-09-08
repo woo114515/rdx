@@ -47,12 +47,19 @@ locked push path because the mechanical fork retains the cylinder. TF loss,
 path deviation, timeouts, cancellation, and shutdown still command zero. Task 2
 Nav2 obstacle handling is not changed.
 
-Physical-motion continuity is checked from the stamped `/odom` pose
-(`odom -> base_footprint`), with an allowed displacement proportional to the
-actual sample interval. Map-frame pose remains responsible only for following
-the map-frame plan. Consequently a GMapping `map -> odom` correction no longer
-looks like impossible physical travel, while stale, regressing, or implausibly
-fast odometry still stops the cycle.
+Targets, remaining-cylinder keepouts, generated paths, the saved home pose, and
+the live tracking pose all use `map`. A GMapping correction therefore changes
+the robot pose used by the controller without rotating a previously screened
+route away from the mapped cylinders. Physical-motion continuity and the
+15 cm release retreat are checked separately in stamped `/odom`, where a map
+correction cannot look like wheel travel.
+
+The final in-place rotation returns to the `map -> base_footprint` yaw captured
+at task start. A five-sample circular window must be stable before the heading
+can be accepted. `/imu/data_raw` is retained only to require a settled physical
+turn rate; its full-task yaw integral is diagnostic and no longer decides
+completion. Missing fixed-frame TF, IMU loss, or an excessive IMU gap stops
+motion. This does not modify the vendor EKF used by Task 2.
 
 `release_forward_motion_guard_enabled` controls the release-stage forward
 progress abort and is false in the current Task 3 configuration. This avoids a
@@ -60,10 +67,21 @@ false stop from a short odometry correction while switching to reverse. Reverse
 completion, lateral and heading drift, timeout, odometry, TF, path-deviation,
 operator cancellation, and zero-command shutdown checks remain active.
 
-`return_path_deviation_guard_enabled` is false for the current direct return.
-The robot continues correcting toward each return waypoint instead of aborting
-solely because accumulated base or odometry error exceeded 0.12 m. The common
-path-deviation guard remains active during approach, contact, and push.
+`return_path_deviation_guard_enabled` is false for the current retraced return.
+The return path reverses the screened push, contact, and approach corridors;
+it does not generate a new shortest delivery-to-home chord. The robot continues
+correcting toward each return waypoint instead of aborting solely because
+accumulated base or odometry error exceeded 0.12 m. The common path-deviation
+guard remains active during approach, contact, and push.
+
+Contact-time target reacquisition is intentionally a local correction. The
+initial approach, target push curve, and return corridors retain their convex
+remaining-cylinder keepout checks. If a fresh `map -> odom` correction makes
+the already reached staging pose appear inside that convex hull, only the new
+short staging-to-staging approach may use per-cylinder clearance instead. It
+must remain at least `transit_clearance + cylinder_radius` from every
+non-selected cylinder. The corrected return retraces this local segment and
+then the original approach that the robot already traversed successfully.
 
 ```bash
 ros2 launch cylinder_push_planner task3_compact.launch.py \
@@ -175,12 +193,11 @@ goals use the fixed home anchor, and the live pose is used only as the next
 approach path's start. This prevents return error, localization drift, or a
 shrinking remaining-cylinder envelope from moving destinations between cycles.
 
-Perception snapshots remain expressed in `map`, but every accepted snapshot is
-converted once into `odom` before a compact motion cycle is generated. The
-approach, contact, push, release, and return controllers then use that frozen
-odom-frame plan. Later GMapping corrections to `map -> odom` therefore cannot
-move an active physical route sideways. Delivered destination exclusions are
-converted back into `map` before they are sent to the snapshot builder.
+Perception snapshots remain expressed in `map`. The approach, contact, push,
+return, remaining-cylinder keepout, and delivered-destination exclusion
+geometry remains in that same frame throughout a compact cycle. `/odom` is not
+used to express obstacle geometry or long paths; it is used only for physical
+motion continuity and release-retreat distance.
 
 Each new collection also establishes an inventory and timestamp generation.
 The controller clears its cached snapshot and accepts only a locked result with

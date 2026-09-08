@@ -6,6 +6,7 @@ from cylinder_push_planner.execution_safety import (
     approach_watchdog_fault,
     closest_path_index,
     front_target_present,
+    match_reacquisition_reference,
     nav2_path_result_error_code,
     obstacle_behind,
     odometry_step_is_plausible,
@@ -217,3 +218,27 @@ def test_reacquisition_rejects_distant_or_invalid_input() -> None:
     assert "prediction" in reason
     with pytest.raises(ValueError, match="limits"):
         unique_reacquisition_match((), (0.4, 0.0), 0.0, 0.06)
+
+
+def test_reacquisition_transforms_fixed_reference_at_observation_time() -> None:
+    # A frozen odom copy at (1, 0) would reject this observation.  The live
+    # fixed-frame transform predicts (0.30, 0.40), so the same target matches.
+    match, expected, reason = match_reacquisition_reference(
+        ((0.31, 0.41),),
+        (1.0, 0.0),
+        (-0.70, 0.40),
+        0.0,
+        0.20,
+        0.06,
+    )
+
+    assert expected == pytest.approx((0.30, 0.40))
+    assert match == (0.31, 0.41)
+    assert "unique" in reason
+
+
+def test_reacquisition_rejects_invalid_fixed_frame_transform() -> None:
+    with pytest.raises(ValueError, match="transform"):
+        match_reacquisition_reference(
+            (), (1.0, 0.0), (float("nan"), 0.0), 0.0, 0.20, 0.06
+        )
