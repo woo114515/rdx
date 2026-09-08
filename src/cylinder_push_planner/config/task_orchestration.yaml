@@ -1,0 +1,6 @@
+cylinder_task_orchestrator:
+  ros__parameters:
+    # Edit both aligned lists when the competition inventory changes. New
+    # colors also require matching HSV and destination configuration.
+    inventory_colors: [blue, green, red]
+    inventory_counts: [2, 2, 2]

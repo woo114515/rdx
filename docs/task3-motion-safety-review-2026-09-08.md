@@ -36,11 +36,13 @@ Neither source change was deployed to the robot as part of this edit.
 The following findings are recorded for later work and must not be interpreted
 as implemented guarantees.
 
-1. Target presence currently means any valid LiDAR return in a narrow forward
-   corridor. It neither identifies the selected candidate nor handles the
-   measured MS200 near blind zone. At the pushing geometry, the cylinder centre
-   is about 0.15 m from LiDAR and its near surface is about 0.115 m away, below
-   the reported 0.15 m `range_min`.
+1. The compact controller now identifies the selected candidate before contact:
+   at staging it stops, selects one unique cylinder-sized cluster near the
+   predicted 2D target position in three stable fresh scans, and rebuilds the
+   remaining path from that measured centre. Ambiguous neighbours cause a safe
+   timeout. The measured MS200 near blind zone still prevents continuous target
+   verification after physical contact: with the cylinder centre about 0.15 m
+   from LiDAR, its near surface is below the reported 0.15 m `range_min`.
 2. The unexpected-front-obstacle check excludes every return in the nominal
    target corridor. A neighboring cylinder or other obstacle in that corridor
    can be mistaken for the expected target.

@@ -22,19 +22,17 @@ cylinder_push_selection_planner:
     destination_slot_spacing: 0.18
     transform_timeout: 0.25
 
-    # Coordinates are relative to the robot pose captured when generate is
-    # called: +x is forward, +y is left. They are transformed into map.
+    # Coordinates are offsets from the initial all-cylinder envelope center.
+    # The axes use the task-start robot heading: +x is forward, +y is left.
+    # The first snapshot's center is retained for the complete sorting task.
     destination_colors: [blue, green, red]
     destinations:
       blue:
-        x: 1.20
-        y: 0.90
+        x: 0.00
+        y: 2.00
       green:
-        # The initial cylinder field is normally about 1.2--2.0 m in front of
-        # task home.  Keep the forward sorting zone beyond that field instead
-        # of placing it near the field centre.
-        x: 2.70
+        x: 2.00
         y: 0.00
       red:
-        x: 1.20
-        y: -0.90
+        x: 0.00
+        y: -2.00

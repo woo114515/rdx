@@ -24,6 +24,7 @@ from .geometry import (
     Target,
     build_push_preview,
     destination_slot,
+    local_offset_to_map,
     path_length,
     select_right_first,
 )
@@ -51,9 +52,9 @@ class SelectionPlannerNode(Node):
             "destination_colors", ["blue", "green", "red"]
         )
         destination_defaults = {
-            "blue": (1.20, 0.90),
-            "green": (2.70, 0.00),
-            "red": (1.20, -0.90),
+            "blue": (0.00, 2.00),
+            "green": (2.00, 0.00),
+            "red": (0.00, -2.00),
         }
         for color in self.get_parameter("destination_colors").value:
             default = destination_defaults.get(str(color))
@@ -66,6 +67,7 @@ class SelectionPlannerNode(Node):
         self._snapshot: ValidatedCylinderArray | None = None
         self._initial_color_counts: dict[str, int] = {}
         self._task_home: tuple[float, float, float] | None = None
+        self._task_field_center: tuple[float, float] | None = None
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
         latched = QoSProfile(
@@ -171,10 +173,16 @@ class SelectionPlannerNode(Node):
                 translation.y,
                 self._float("staging_clearance"),
             )
+            if self._task_field_center is None:
+                self._task_field_center = (
+                    selection.envelope_x,
+                    selection.envelope_y,
+                )
+            task_field_center = self._task_field_center
             destination, slot_index, slot_count = self._destination_for_color(
                 selection.target.color,
-                task_home[0],
-                task_home[1],
+                task_field_center[0],
+                task_field_center[1],
                 task_home[2],
             )
             plan = build_push_preview(
@@ -230,6 +238,7 @@ class SelectionPlannerNode(Node):
         status = {
             "ready": True,
             "motion_output": False,
+            "plan_stamp": [stamp.sec, stamp.nanosec],
             "map_collision_checked": False,
             "target_id": plan.selection.target.candidate_id,
             "target_color": plan.selection.target.color,
@@ -243,6 +252,9 @@ class SelectionPlannerNode(Node):
             "destination_slot_index": slot_index,
             "destination_slot_count": slot_count,
             "task_home": [round(value, 4) for value in task_home],
+            "task_field_center": [
+                round(value, 4) for value in task_field_center
+            ],
             "approach_path_length": round(path_length(plan.approach_path), 4),
             "contact_path_length": round(path_length(contact_path), 4),
             "push_path_length": round(path_length(plan.robot_push_path), 4),
@@ -256,7 +268,7 @@ class SelectionPlannerNode(Node):
         )
         return response
 
-    def _destination_for_color(self, color, home_x, home_y, home_yaw):
+    def _destination_for_color(self, color, field_x, field_y, task_yaw):
         colors = tuple(str(item) for item in self.get_parameter("destination_colors").value)
         if color not in colors:
             raise ValueError(f"no destination configured for color {color!r}")
@@ -280,12 +292,13 @@ class SelectionPlannerNode(Node):
             slot_count,
             self._float("destination_slot_spacing"),
         )
-        cosine = math.cos(home_yaw)
-        sine = math.sin(home_yaw)
         return (
-            (
-                home_x + cosine * local_x - sine * local_y,
-                home_y + sine * local_x + cosine * local_y,
+            local_offset_to_map(
+                field_x,
+                field_y,
+                task_yaw,
+                local_x,
+                local_y,
             ),
             slot_index,
             slot_count,
@@ -305,6 +318,7 @@ class SelectionPlannerNode(Node):
         del request
         self._clear_preview()
         self._task_home = None
+        self._task_field_center = None
         self._initial_color_counts.clear()
         response.success = True
         response.message = "push task anchor and slot history reset"

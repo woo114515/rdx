@@ -1,0 +1,123 @@
+cylinder_direct_task_controller:
+  ros__parameters:
+    # The compact launch remains motionless unless explicitly overridden.
+    execution_enabled: false
+    snapshot_topic: /cylinder_snapshot/validated_objects
+    scan_topic: /scan
+    cmd_vel_topic: /cmd_vel
+    # Candidate positions arrive in map, while each locked motion cycle is
+    # frozen into odom so GMapping corrections cannot move the route.
+    fixed_frame: map
+    execution_frame: odom
+    robot_frame: base_footprint
+    odom_topic: /odom
+    odom_frame: odom
+
+    inventory_colors: [blue, green, red]
+    inventory_counts: [2, 2, 2]
+    destination_colors: [blue, green, red]
+    # Destination offsets are relative to the initial field centre and use the
+    # robot's task-start heading (+x forward, +y left).
+    destinations:
+      blue: {x: 0.00, y: 2.00}
+      green: {x: 2.00, y: 0.00}
+      red: {x: 0.00, y: -2.00}
+    destination_slot_spacing: 0.18
+    envelope_exit_clearance: 0.10
+    delivered_exclusion_radius: 0.18
+
+    # No dynamic avoidance or Nav2 replanning is used. With corridor checking
+    # enabled, paths are generated outside the expanded convex hull of every
+    # cylinder except the selected target.
+    staging_clearance: 0.25
+    # The measured cylinder centre is about 0.15 m from the LiDAR at contact.
+    contact_offset: 0.15
+    release_distance: 0.15
+    transit_clearance: 0.10
+    require_clear_corridors: true
+    # Task 3 uses only the prevalidated geometric paths. Live scan returns
+    # do not stop or replan the robot; target tracking and scan freshness remain
+    # active. Set true to restore front/rear obstacle-triggered stopping.
+    live_obstacle_stop_enabled: false
+
+    control_rate: 10.0
+    # Require a fresh scan before starting, but tolerate short board-side
+    # scheduling gaps after the geometric route has already been locked.
+    scan_timeout: 0.75
+    motion_scan_timeout: 2.00
+    transform_timeout: 0.10
+    transform_failure_limit: 3
+    # The physical base does not move reliably below about 0.15 m/s. Keep
+    # every non-zero linear command at or above that measured motor threshold;
+    # explicit stop and safety commands remain exactly zero.
+    minimum_linear_speed: 0.15
+    # Use the measured minimum reliable base speed for every motion phase.
+    transit_speed: 0.15
+    contact_speed: 0.15
+    push_speed: 0.15
+    release_speed: 0.15
+    return_speed: 0.15
+    angular_gain: 3.0
+    maximum_angular_speed: 0.50
+    heading_tolerance: 0.08
+    drive_heading_limit: 0.60
+    # A longer lookahead suppresses left/right steering oscillation while the
+    # pure-pursuit controller follows the wide keepout curves.
+    path_lookahead: 0.30
+    staging_tolerance: 0.05
+    contact_tolerance: 0.035
+    push_tolerance: 0.06
+    home_tolerance: 0.08
+    maximum_path_deviation: 0.12
+    # Let the return controller correct accumulated base/odometry offset instead
+    # of aborting solely because its lateral path deviation exceeds 0.12 m.
+    return_path_deviation_guard_enabled: false
+    # Motion continuity is checked in the continuous odom frame. The allowed
+    # displacement scales with the actual odometry timestamp interval, so a
+    # delayed control callback is not mistaken for a localization jump.
+    odometry_timeout: 0.75
+    # The vendor wheel odometry can report discontinuous position steps under
+    # load. Do not abort an otherwise valid locked route solely on that test.
+    odometry_jump_guard_enabled: false
+    maximum_odom_linear_speed: 0.50
+    odom_distance_slack: 0.03
+    # A completed cycle should leave the robot at home. A larger discrepancy
+    # usually means SLAM was restarted and its map coordinates were reset.
+    maximum_home_anchor_error_before_plan: 0.30
+    alignment_timeout: 15.0
+    approach_timeout: 40.0
+    contact_timeout: 15.0
+    push_timeout: 60.0
+    release_timeout: 10.0
+    # Ignore transient forward odometry correction while changing to reverse.
+    release_forward_motion_guard_enabled: false
+    return_timeout: 50.0
+    # In run_all mode, stop the full task instead of waiting forever when the
+    # remaining inventory cannot be visually validated and locked.
+    snapshot_wait_timeout: 120.0
+
+    target_acquire_distance: 0.65
+    target_maximum_distance: 0.32
+    target_corridor_half_width: 0.07
+    # Wheel odometry can accumulate several centimetres of lateral error over
+    # the long approach. At staging, stop and associate the locked target with
+    # one unique cylinder-sized LiDAR cluster in three stable fresh scans, then
+    # rebuild the short approach/contact path around the measured centre.
+    target_reacquisition_enabled: true
+    target_reacquisition_timeout: 2.0
+    target_reacquisition_required_scans: 3
+    target_reacquisition_maximum_correction: 0.20
+    target_reacquisition_ambiguity_margin: 0.06
+    target_reacquisition_sample_spread: 0.04
+    target_reacquisition_maximum_point_gap: 0.05
+    target_reacquisition_minimum_points: 3
+    target_reacquisition_minimum_diameter: 0.015
+    target_reacquisition_maximum_diameter: 0.12
+    target_nominal_radius: 0.035
+    # Once contact begins, execute the locked contact and push paths without a
+    # LiDAR target-loss stop. The mechanical fork retains the cylinder, while
+    # near-contact returns sit at the LiDAR's minimum usable range. A target
+    # must still be visible before entering the contact phase.
+    obstacle_stop_distance: 0.32
+    obstacle_half_width: 0.18
+    rear_stop_distance: 0.25

@@ -1,5 +1,104 @@
 # cylinder_push_planner
 
+## Compact direct architecture (current Task 3 path)
+
+`task3_compact.launch.py` is the reduced runtime architecture. It preserves
+the already validated six-cylinder perception chain unchanged and replaces the
+selection planner, reobservation controller, staged Nav2 executor, and service
+orchestrator with one `direct_task_controller` process. The launch therefore
+starts four project nodes rather than seven:
+
+- `cylinder_snapshot_builder`;
+- `color_object_detector`;
+- `cylinder_candidate_validator`;
+- `cylinder_direct_task_controller`.
+
+The direct controller does not call Nav2 and does not dynamically replan. It
+selects an outside target, removes that target from the remaining-cylinder
+set, expands the remaining convex hull by the configured robot-centre
+clearance, and constructs approach, push, and return curves outside that
+keepout. The cycle is rejected only if no valid geometric curve can be found.
+Live scan, TF,
+target-presence, path-deviation, timeout, cancel, and zero-command shutdown
+checks remain active. Motion is disabled unless explicitly enabled:
+
+Before entering the short contact segment, the compact controller now stops
+and reacquires the selected target from three stable fresh near-range LiDAR
+scans. It compares cylinder-sized clusters with the selected target's predicted
+2D position, rejects an ambiguous neighbour, transforms the accepted centre
+into `odom`, and rebuilds the remaining approach/contact/push/return geometry.
+Ambiguous or split-cluster scans are skipped rather than assigned. This
+corrects the lateral dead-reckoning error accumulated during the long approach
+without allowing SLAM corrections to move the active route.
+
+The measured base motor threshold is approximately `0.15 m/s`. The compact
+controller therefore clamps every non-zero linear command to at least that
+value, while all normal stops and safety shutdowns still publish exact zero.
+After subsequent path-tracking tests, all compact-controller translation
+phases were restored to the measured minimum reliable speed of `0.15 m/s`.
+The angular gain and angular-speed limit remain `3.0` and `0.50 rad/s`.
+
+For the current controlled Task 3 field, `live_obstacle_stop_enabled` is false:
+the controller follows corridors checked against the locked cylinder snapshot
+without stopping on later front/rear scan returns or attempting avoidance.
+Scan freshness and a pre-contact selected-target confirmation are still
+required. After contact begins, near-range LiDAR target-loss does not stop the
+locked push path because the mechanical fork retains the cylinder. TF loss,
+path deviation, timeouts, cancellation, and shutdown still command zero. Task 2
+Nav2 obstacle handling is not changed.
+
+Physical-motion continuity is checked from the stamped `/odom` pose
+(`odom -> base_footprint`), with an allowed displacement proportional to the
+actual sample interval. Map-frame pose remains responsible only for following
+the map-frame plan. Consequently a GMapping `map -> odom` correction no longer
+looks like impossible physical travel, while stale, regressing, or implausibly
+fast odometry still stops the cycle.
+
+`release_forward_motion_guard_enabled` controls the release-stage forward
+progress abort and is false in the current Task 3 configuration. This avoids a
+false stop from a short odometry correction while switching to reverse. Reverse
+completion, lateral and heading drift, timeout, odometry, TF, path-deviation,
+operator cancellation, and zero-command shutdown checks remain active.
+
+`return_path_deviation_guard_enabled` is false for the current direct return.
+The robot continues correcting toward each return waypoint instead of aborting
+solely because accumulated base or odometry error exceeded 0.12 m. The common
+path-deviation guard remains active during approach, contact, and push.
+
+```bash
+ros2 launch cylinder_push_planner task3_compact.launch.py \
+  enable_motion:=true
+
+# Reset perception and begin collection for the configured inventory.
+ros2 service call /cylinder_task/prepare std_srvs/srv/Trigger '{}'
+
+# After validated_objects reports ready=true and locked=true, one call plans,
+# approaches, contacts, pushes, releases, returns, and starts the next snapshot.
+ros2 service call /cylinder_task/run_once std_srvs/srv/Trigger '{}'
+
+# Or replace prepare + repeated run_once calls with one full-inventory command.
+# It prepares six cylinders, pushes one at a time, returns home after each one,
+# rebuilds the remaining snapshot, and stops only at task_complete or a fault.
+ros2 service call /cylinder_task/run_all std_srvs/srv/Trigger '{}'
+
+# Available throughout motion.
+ros2 service call /cylinder_task/cancel std_srvs/srv/Trigger '{}'
+```
+
+The previous `task3_planning.launch.py` and its low-level services remain in
+the package as a rollback and diagnostic path. Do not run the compact and
+legacy launches together because their task services and velocity publishers
+conflict.
+
+`run_all` returns immediately after accepting the operation; completion is
+reported asynchronously on `/cylinder_task/status`. It includes the initial
+`prepare`, so do not call `prepare` first. Each reduced-inventory snapshot must
+reach `ready=true` and `locked=true` within 120 seconds. A perception timeout or
+any motion fault cancels the automatic loop and publishes zero velocity; it does
+not retry a failed motion stage.
+
+## Legacy staged architecture
+
 This package converts a locked, validated cylinder snapshot into planning
 geometry and provides a separately gated execution node. The planner itself
 does not publish `Twist` or invoke Nav2; execution is disabled by default.
@@ -23,6 +122,18 @@ start `snapshot.launch.py` or
 `lidar_first_validation.launch.py`, because that would create duplicate nodes.
 The camera, LiDAR, TF, Nav2, and mapping/base launch remain external hardware
 prerequisites.
+
+The combined launch selects Fast DDS `UDPv4` for all child processes to avoid
+the shared-memory port-lock failure observed on the robot.  Before issuing
+direct `ros2 service`, `topic`, or `param` commands in another terminal, source
+the deployed helper once:
+
+```bash
+source /home/sunrise/yahboomcar_ws/task3_ros_env.sh
+```
+
+This transport override is deliberately scoped to Task 3; see
+`docs/fastdds-udp-transport.md` for the diagnosis and rollback option.
 
 The locked `/cylinder_snapshot/validated_objects` result uses reliable,
 transient-local QoS. A planner or diagnostic subscriber that starts after the
@@ -49,8 +160,8 @@ built. Both the sampled robot pushing trajectory and return trajectory must stay
 outside its configured expansion. The cylinder trajectory receives a separate
 clearance check, and the destination must be outside the initial all-cylinder
 envelope. Destinations are configured by color in `config/selection.yaml` as
-coordinates relative to the robot pose captured at generation time (`+x`
-forward, `+y` left).
+offsets from the first six-cylinder envelope centre. Their axes use the robot
+heading captured at first generation (`+x` forward, `+y` left).
 
 Each color coordinate is the centre of a sorting zone, not a single shared
 drop point. The planner learns the initial count for every configured color
@@ -58,16 +169,33 @@ from the first inventory message and allocates successive tangential slots at
 the configured spacing. This supports arbitrary colors and counts and prevents
 the second same-color cylinder from being pushed directly into the first.
 The robot pose captured for the first generated plan is retained as the task
-home anchor. Later sorting-zone coordinates and return goals use that fixed
-anchor, while the live pose is used only as the next approach path's start.
-This prevents return error or localization drift from moving every destination
-on successive cycles.
+home anchor. The initial field centre is retained separately as the sorting-zone
+origin. Later sorting-zone coordinates use that fixed field origin, return
+goals use the fixed home anchor, and the live pose is used only as the next
+approach path's start. This prevents return error, localization drift, or a
+shrinking remaining-cylinder envelope from moving destinations between cycles.
+
+Perception snapshots remain expressed in `map`, but every accepted snapshot is
+converted once into `odom` before a compact motion cycle is generated. The
+approach, contact, push, release, and return controllers then use that frozen
+odom-frame plan. Later GMapping corrections to `map -> odom` therefore cannot
+move an active physical route sideways. Delivered destination exclusions are
+converted back into `map` before they are sent to the snapshot builder.
+
+Each new collection also establishes an inventory and timestamp generation.
+The controller clears its cached snapshot and accepts only a locked result with
+the exact remaining color counts and a header timestamp after that generation
+started. A transient-local sample from the preceding cycle can no longer start
+the next motion cycle.
 
 `/cylinder_push_plan/reset` clears only the current preview and deliberately
-preserves that anchor and slot history for the next push. Before starting a
-completely new field, call `/cylinder_push_plan/reset_task`; it clears both.
-The snapshot builder separately owns delivered-object exclusions and the
-remaining inventory, so a completely new field must reset those explicitly:
+preserves those anchors and slot history for the next push. Before starting a
+completely new field, call `/cylinder_push_plan/reset_task`; it clears them.
+The executor similarly exposes `/cylinder_push_execution/reset_task` to clear
+its delivered-destination history; ordinary execution `reset` deliberately
+preserves that history between pushes. The snapshot builder separately owns
+delivered-object exclusions and the remaining inventory, so a completely new
+field must reset those explicitly:
 
 ```bash
 ros2 service call /cylinder_validation/reset std_srvs/srv/Trigger '{}'
@@ -79,7 +207,7 @@ ros2 service call /cylinder_snapshot/set_inventory \
   color_object_sorter_interfaces/srv/SetObjectInventory \
   '{colors: [blue, green, red], counts: [2, 2, 2]}'
 ros2 service call /cylinder_push_plan/reset_task std_srvs/srv/Trigger '{}'
-ros2 service call /cylinder_push_execution/reset std_srvs/srv/Trigger '{}'
+ros2 service call /cylinder_push_execution/reset_task std_srvs/srv/Trigger '{}'
 ```
 
 Use the inventory configured for the new field; the shown `2/2/2` values are
@@ -151,6 +279,37 @@ Monitor `/cylinder_push_execution/status` throughout. At any point, call
 zero-velocity burst. This is the source-level first implementation. It must not
 be treated as competition-ready until each stage has passed low-speed physical
 tests independently.
+
+### Bundled task controls
+
+`task3_planning.launch.py` also starts a thin orchestration node. It retains all
+low-level services for diagnosis. Normal operation uses preparation, planning,
+and one automatic execution call:
+
+```bash
+# New field: reset execution, plan, validation and snapshot state; clear old
+# exclusions; load the configured inventory; and begin stationary collection.
+ros2 service call /cylinder_task/prepare std_srvs/srv/Trigger '{}'
+
+# After validated_objects reports ready=true and locked=true, call once. It
+# generates a fresh plan and then automatically performs approach, contact,
+# push, release, return and delivery finalization.
+ros2 service call /cylinder_task/run_once std_srvs/srv/Trigger '{}'
+
+# Available during execution:
+ros2 service call /cylinder_task/cancel std_srvs/srv/Trigger '{}'
+```
+
+`run_once` first regenerates the preview and waits until every stamped path
+component has reached the executor. It then follows the executor's reported
+state instead of using fixed delays. All existing input freshness, collision,
+target-presence, timeout and zero-velocity fault checks remain active. A failure
+cancels the cycle rather than retrying motion. `/cylinder_task/generate` and
+`/cylinder_task/advance` remain available for staged
+diagnosis, but is not part of normal operation. Inspect `/cylinder_task/status`
+and `/cylinder_push_execution/status` while the cycle runs. Inventory is configured in
+`config/task_orchestration.yaml`; colors and counts remain aligned lists so the
+workflow is not tied to six cylinders or three colors.
 
 ## Inventory transition between pushes
 

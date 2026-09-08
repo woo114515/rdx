@@ -6,6 +6,51 @@ import math
 from typing import Any, Sequence
 
 
+def unique_reacquisition_match(
+    candidates: Sequence[tuple[float, float]],
+    expected: tuple[float, float],
+    maximum_correction: float,
+    ambiguity_margin: float,
+) -> tuple[tuple[float, float] | None, str]:
+    """Select one near-range LiDAR candidate around a predicted target.
+
+    The function deliberately compares two-dimensional centre positions, not
+    only bearing or the first return in a forward corridor.  A match is
+    accepted only when it is close enough to the locked target prediction and
+    distinctly better than the runner-up.  Callers can therefore wait for
+    another scan instead of silently choosing a neighbouring cylinder.
+    """
+
+    values = (*expected, maximum_correction, ambiguity_margin)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("reacquisition values must be finite")
+    if maximum_correction <= 0.0 or ambiguity_margin < 0.0:
+        raise ValueError("invalid reacquisition limits")
+    if not candidates:
+        return None, "no cylinder-sized LiDAR cluster"
+    if not all(
+        len(candidate) == 2
+        and all(math.isfinite(value) for value in candidate)
+        for candidate in candidates
+    ):
+        raise ValueError("reacquisition candidates must be finite 2D points")
+
+    ranked = sorted(
+        (math.dist(candidate, expected), candidate) for candidate in candidates
+    )
+    best_error, best = ranked[0]
+    if best_error > maximum_correction:
+        return None, f"nearest cluster is {best_error:.3f} m from prediction"
+    if len(ranked) > 1:
+        second_error = ranked[1][0]
+        if second_error - best_error < ambiguity_margin:
+            return None, (
+                "ambiguous near-range clusters: "
+                f"errors={best_error:.3f}/{second_error:.3f} m"
+            )
+    return best, f"unique cluster correction={best_error:.3f} m"
+
+
 def nav2_path_result_error_code(result: Any) -> int:
     """Return a path result error code across Nav2 Humble variants.
 
@@ -107,6 +152,39 @@ def retreat_pose_step(
     if not all(math.isfinite(value) for value in values):
         raise ValueError("retreat poses must be finite")
     return math.hypot(current_x - previous_x, current_y - previous_y)
+
+
+def odometry_step_is_plausible(
+    previous_x: float,
+    previous_y: float,
+    current_x: float,
+    current_y: float,
+    elapsed: float,
+    maximum_speed: float,
+    distance_slack: float,
+) -> bool:
+    """Check an odometry step against elapsed time and a bounded speed.
+
+    ``distance_slack`` covers encoder quantization and small estimator
+    corrections. A longer callback interval therefore permits proportionally
+    more real travel instead of being compared with a fixed per-tick limit.
+    """
+
+    values = (
+        previous_x,
+        previous_y,
+        current_x,
+        current_y,
+        elapsed,
+        maximum_speed,
+        distance_slack,
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("odometry continuity values must be finite")
+    if elapsed <= 0.0 or maximum_speed <= 0.0 or distance_slack < 0.0:
+        raise ValueError("invalid odometry continuity limits")
+    distance = math.hypot(current_x - previous_x, current_y - previous_y)
+    return distance <= maximum_speed * elapsed + distance_slack
 
 
 def front_target_present(

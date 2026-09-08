@@ -9,6 +9,7 @@ from cylinder_push_planner.geometry import (
     convex_hull,
     destination_slot,
     generate_reobservation_viewpoints,
+    local_offset_to_map,
     path_length,
     path_stays_outside,
     point_sets_stable,
@@ -17,6 +18,20 @@ from cylinder_push_planner.geometry import (
     polyline_outside_keepout,
     select_right_first,
 )
+
+
+def test_destination_offset_uses_fixed_field_center_and_task_axes() -> None:
+    assert local_offset_to_map(2.0, -0.1, 0.0, 1.5, -0.09) == pytest.approx(
+        (3.5, -0.19)
+    )
+    assert local_offset_to_map(
+        2.0, -0.1, math.pi / 2.0, 1.5, -0.09
+    ) == pytest.approx((2.09, 1.4))
+
+
+def test_destination_transform_rejects_non_finite_values() -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        local_offset_to_map(0.0, 0.0, 0.0, math.nan, 0.0)
 
 
 def test_snapshot_stability_is_order_independent_and_rejects_motion() -> None:

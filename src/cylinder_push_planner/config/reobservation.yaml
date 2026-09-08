@@ -11,6 +11,7 @@ cylinder_reobservation:
     follow_path_action: /follow_path
     controller_server: /controller_server
     controller_plugin: FollowPath
+    goal_checker_id: task3_goal_checker
     stop_topic: /cmd_vel
 
     # The combined launch overrides this only when the operator explicitly

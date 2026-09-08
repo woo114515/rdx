@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -40,6 +40,12 @@ def generate_launch_description() -> LaunchDescription:
                 ),
             ),
             DeclareLaunchArgument(
+                "task_orchestration_config",
+                default_value=str(
+                    planner_share / "config" / "task_orchestration.yaml"
+                ),
+            ),
+            DeclareLaunchArgument(
                 "enable_reobservation_motion",
                 default_value="false",
                 description="Allow explicitly armed Nav2 viewpoint movement",
@@ -48,6 +54,22 @@ def generate_launch_description() -> LaunchDescription:
                 "enable_push_cycle_motion",
                 default_value="false",
                 description="Allow explicitly armed approach, push and return motion",
+            ),
+            DeclareLaunchArgument(
+                "fastdds_builtin_transports",
+                default_value="UDPv4",
+                description=(
+                    "Fast DDS builtin transport set. UDPv4 avoids stale SHM "
+                    "port-lock failures on the robot."
+                ),
+            ),
+            # This must execute before any Node action creates a DDS
+            # participant.  Keep it scoped to this launch instead of changing
+            # the user's global shell environment, because other robot tasks
+            # may still benefit from same-host shared-memory transport.
+            SetEnvironmentVariable(
+                "FASTDDS_BUILTIN_TRANSPORTS",
+                LaunchConfiguration("fastdds_builtin_transports"),
             ),
             # Start the consumer first. Transient-local QoS also makes startup
             # order harmless if process scheduling changes this order.
@@ -87,6 +109,13 @@ def generate_launch_description() -> LaunchDescription:
                         )
                     },
                 ],
+            ),
+            Node(
+                package="cylinder_push_planner",
+                executable="task_orchestrator",
+                name="cylinder_task_orchestrator",
+                output="screen",
+                parameters=[LaunchConfiguration("task_orchestration_config")],
             ),
             Node(
                 package="cylinder_field_mapping",

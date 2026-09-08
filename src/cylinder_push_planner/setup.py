@@ -17,7 +17,7 @@ setup(
     zip_safe=True,
     maintainer="woo114515",
     maintainer_email="woo114515@users.noreply.github.com",
-    description="Target selection and gated push-cycle execution.",
+    description="Compact direct Task 3 control with legacy staged tools.",
     license="MIT",
     entry_points={
         "console_scripts": [
@@ -25,6 +25,9 @@ setup(
             "reobservation = cylinder_push_planner.reobservation_node:main",
             "approach_execution = cylinder_push_planner.approach_execution_node:main",
             "push_cycle_execution = cylinder_push_planner.approach_execution_node:main",
+            "task_orchestrator = cylinder_push_planner.task_orchestrator_node:main",
+            "direct_task_controller = "
+            "cylinder_push_planner.direct_task_node:main",
         ],
     },
 )

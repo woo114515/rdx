@@ -65,6 +65,7 @@ class ReobservationNode(Node):
             "follow_path_action": "/follow_path",
             "controller_server": "/controller_server",
             "controller_plugin": "FollowPath",
+            "goal_checker_id": "task3_goal_checker",
             "stop_topic": "/cmd_vel",
             "execution_enabled": False,
             "require_zero_lateral_velocity": True,
@@ -630,7 +631,7 @@ class ReobservationNode(Node):
         goal = FollowPath.Goal()
         goal.path = checked_path
         goal.controller_id = ""
-        goal.goal_checker_id = ""
+        goal.goal_checker_id = self._string("goal_checker_id")
         future = self._follow_path.send_goal_async(goal)
 
         def response(completed) -> None:

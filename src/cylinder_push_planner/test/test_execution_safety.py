@@ -8,12 +8,14 @@ from cylinder_push_planner.execution_safety import (
     front_target_present,
     nav2_path_result_error_code,
     obstacle_behind,
+    odometry_step_is_plausible,
     path_stays_outside_polygon,
     plan_inputs_fault,
     point_outside_polygon,
     retreat_motion,
     retreat_pose_step,
     tracking_command,
+    unique_reacquisition_match,
     unexpected_obstacle_ahead,
 )
 
@@ -134,6 +136,19 @@ def test_retreat_pose_step_detects_localization_jump() -> None:
     assert retreat_pose_step(0.0, 0.0, -0.15, 0.0) == pytest.approx(0.15)
 
 
+def test_odometry_continuity_scales_allowed_distance_with_elapsed_time() -> None:
+    assert odometry_step_is_plausible(0.0, 0.0, 0.015, 0.0, 0.1, 0.5, 0.03)
+    assert odometry_step_is_plausible(0.0, 0.0, 0.12, 0.0, 0.2, 0.5, 0.03)
+    assert not odometry_step_is_plausible(
+        0.0, 0.0, 0.124, 0.0, 0.1, 0.5, 0.03
+    )
+
+
+def test_odometry_continuity_rejects_invalid_time() -> None:
+    with pytest.raises(ValueError, match="invalid odometry"):
+        odometry_step_is_plausible(0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.03)
+
+
 def test_retreat_helpers_reject_non_finite_pose() -> None:
     with pytest.raises(ValueError):
         retreat_pose_step(0.0, 0.0, float("nan"), 0.0)
@@ -168,3 +183,37 @@ def test_reverse_obstacle_uses_rear_half_plane() -> None:
         (0.20, 0.18), 0.0, math.pi, 0.1, 20.0, 0.25, 0.15
     )
     assert not obstacle_behind((0.20,), 0.0, 1.0, 0.1, 20.0, 0.25, 0.15)
+
+
+def test_reacquisition_selects_unique_displaced_target() -> None:
+    match, reason = unique_reacquisition_match(
+        ((0.38, -0.10), (0.31, 0.20)),
+        (0.406, -0.004),
+        0.20,
+        0.06,
+    )
+
+    assert match == (0.38, -0.10)
+    assert "unique" in reason
+
+
+def test_reacquisition_rejects_two_nearly_equal_matches() -> None:
+    match, reason = unique_reacquisition_match(
+        ((0.40, -0.05), (0.40, 0.05)),
+        (0.40, 0.0),
+        0.20,
+        0.06,
+    )
+
+    assert match is None
+    assert "ambiguous" in reason
+
+
+def test_reacquisition_rejects_distant_or_invalid_input() -> None:
+    match, reason = unique_reacquisition_match(
+        ((0.70, 0.0),), (0.40, 0.0), 0.20, 0.06
+    )
+    assert match is None
+    assert "prediction" in reason
+    with pytest.raises(ValueError, match="limits"):
+        unique_reacquisition_match((), (0.4, 0.0), 0.0, 0.06)

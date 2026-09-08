@@ -144,7 +144,7 @@ def destination_slot(
     slot_count: int,
     spacing: float,
 ) -> tuple[float, float]:
-    """Spread same-color destinations tangentially around a local-frame center."""
+    """Spread same-color destinations tangentially around a local offset."""
 
     if slot_count < 1:
         raise ValueError("destination slot count must be positive")
@@ -154,11 +154,31 @@ def destination_slot(
         raise ValueError("destination slot spacing must be positive")
     radius = math.hypot(center_x, center_y)
     if radius <= 1e-9:
-        raise ValueError("destination center must differ from task-start pose")
+        raise ValueError("destination offset must differ from the field center")
     offset = (slot_index - 0.5 * (slot_count - 1)) * spacing
     tangent_x = -center_y / radius
     tangent_y = center_x / radius
     return center_x + tangent_x * offset, center_y + tangent_y * offset
+
+
+def local_offset_to_map(
+    origin_x: float,
+    origin_y: float,
+    yaw: float,
+    offset_x: float,
+    offset_y: float,
+) -> tuple[float, float]:
+    """Apply a task-frame offset to a fixed map-frame origin."""
+
+    values = (origin_x, origin_y, yaw, offset_x, offset_y)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("destination transform values must be finite")
+    cosine = math.cos(yaw)
+    sine = math.sin(yaw)
+    return (
+        origin_x + cosine * offset_x - sine * offset_y,
+        origin_y + sine * offset_x + cosine * offset_y,
+    )
 
 
 def path_stays_outside(

@@ -77,6 +77,7 @@ class ApproachExecutionNode(Node):
             "follow_path_action": "/follow_path",
             "controller_server": "/controller_server",
             "controller_plugin": "FollowPath",
+            "goal_checker_id": "task3_goal_checker",
             "arming_timeout": 10.0,
             "plan_timeout": 120.0,
             "scan_timeout": 0.75,
@@ -199,6 +200,9 @@ class ApproachExecutionNode(Node):
         )
         self.create_service(Trigger, "/cylinder_push_execution/reset", self._reset)
         self.create_service(
+            Trigger, "/cylinder_push_execution/reset_task", self._reset_task
+        )
+        self.create_service(
             Trigger, "/cylinder_push_execution/arm_contact", self._arm_contact
         )
         self.create_service(
@@ -245,6 +249,8 @@ class ApproachExecutionNode(Node):
         self._generation = 0
         self._plan_ready = False
         self._plan_received = 0.0
+        self._plan_stamp: tuple[int, int] | None = None
+        self._announced_plan_stamp: tuple[int, int] | None = None
         self._plan_target_id = -1
         self._plan_target_color = ""
         self._plan_destination: tuple[float, float] | None = None
@@ -290,6 +296,16 @@ class ApproachExecutionNode(Node):
         self._plan_ready = bool(payload.get("ready", False)) and not bool(
             payload.get("motion_output", True)
         )
+        plan_stamp = payload.get("plan_stamp")
+        if (
+            isinstance(plan_stamp, list)
+            and len(plan_stamp) == 2
+            and all(isinstance(value, int) for value in plan_stamp)
+        ):
+            self._plan_stamp = (plan_stamp[0], plan_stamp[1])
+        else:
+            self._plan_stamp = None
+            self._plan_ready = False
         self._plan_target_id = int(payload.get("target_id", -1))
         self._plan_target_color = str(payload.get("target_color", ""))
         destination = payload.get("destination")
@@ -317,10 +333,7 @@ class ApproachExecutionNode(Node):
             self._plan_exclusion_radius <= 0.0
         ):
             self._plan_ready = False
-        self._plan_received = self._now()
-        if self._state == "collecting_remaining" and self._plan_ready:
-            self._state = "idle"
-            self._publish_status("idle", "new reduced-inventory preview received")
+        self._maybe_announce_fresh_plan()
 
     def _on_snapshot(self, message: ValidatedCylinderArray) -> None:
         if not self._accept_plan_updates():
@@ -328,31 +341,37 @@ class ApproachExecutionNode(Node):
         self._snapshot = message
         self._snapshot_ready = bool(message.ready)
         self._snapshot_locked = bool(message.locked)
+        self._maybe_announce_fresh_plan()
 
     def _on_staging_pose(self, message: PoseStamped) -> None:
         if not self._accept_plan_updates():
             return
         self._staging_pose = message if message.header.frame_id else None
+        self._maybe_announce_fresh_plan()
 
     def _on_approach_path(self, message: Path) -> None:
         if not self._accept_plan_updates():
             return
         self._approach_preview = message if len(message.poses) >= 2 else None
+        self._maybe_announce_fresh_plan()
 
     def _on_target_path(self, message: Path) -> None:
         if not self._accept_plan_updates():
             return
         self._target_path = message if len(message.poses) >= 2 else None
+        self._maybe_announce_fresh_plan()
 
     def _on_push_path(self, message: Path) -> None:
         if not self._accept_plan_updates():
             return
         self._push_path = message if len(message.poses) >= 2 else None
+        self._maybe_announce_fresh_plan()
 
     def _on_return_path(self, message: Path) -> None:
         if not self._accept_plan_updates():
             return
         self._return_path = message if len(message.poses) >= 2 else None
+        self._maybe_announce_fresh_plan()
 
     def _on_keepout(self, message: PolygonStamped) -> None:
         if not self._accept_plan_updates():
@@ -361,6 +380,37 @@ class ApproachExecutionNode(Node):
         # are no remaining cylinders to protect. An unstamped message is the
         # planner's reset sentinel and means that no plan is available.
         self._keepout = message if message.header.frame_id else None
+        self._maybe_announce_fresh_plan()
+
+    @staticmethod
+    def _message_stamp(message) -> tuple[int, int]:
+        return (message.header.stamp.sec, message.header.stamp.nanosec)
+
+    def _maybe_announce_fresh_plan(self) -> None:
+        """Publish readiness only after every plan part has the new stamp."""
+
+        if not self._plan_ready or self._plan_stamp is None:
+            return
+        if not self._snapshot_ready or not self._snapshot_locked:
+            return
+        messages = (
+            self._staging_pose,
+            self._approach_preview,
+            self._target_path,
+            self._push_path,
+            self._return_path,
+            self._keepout,
+        )
+        if any(message is None for message in messages):
+            return
+        if any(self._message_stamp(message) != self._plan_stamp for message in messages):
+            return
+        if self._announced_plan_stamp == self._plan_stamp:
+            return
+        self._announced_plan_stamp = self._plan_stamp
+        self._plan_received = self._now()
+        self._state = "idle"
+        self._publish_status("idle", "fresh complete push preview received")
 
     def _on_scan(self, message: LaserScan) -> None:
         self._last_scan = message
@@ -533,7 +583,7 @@ class ApproachExecutionNode(Node):
         goal = FollowPath.Goal()
         goal.path = checked_path
         goal.controller_id = ""
-        goal.goal_checker_id = ""
+        goal.goal_checker_id = self._string("goal_checker_id")
         future = self._follow_path.send_goal_async(goal)
 
         def done(completed) -> None:
@@ -878,6 +928,8 @@ class ApproachExecutionNode(Node):
         del request
         self._terminate("idle", "reset")
         self._plan_ready = False
+        self._plan_stamp = None
+        self._announced_plan_stamp = None
         self._snapshot_ready = False
         self._snapshot_locked = False
         self._staging_pose = None
@@ -896,6 +948,13 @@ class ApproachExecutionNode(Node):
         self._checked_path_publisher.publish(Path())
         response.success = True
         response.message = "approach executor reset; delivery history preserved"
+        return response
+
+    def _reset_task(self, request, response):
+        response = self._reset(request, response)
+        self._delivered_destinations = []
+        self._publish_status("idle", "new task reset; delivery history cleared")
+        response.message = "approach executor and delivery history reset"
         return response
 
     def _tick(self) -> None:
@@ -1223,6 +1282,8 @@ class ApproachExecutionNode(Node):
         self._checked_path_publisher.publish(path)
         goal = FollowPath.Goal()
         goal.path = path
+        goal.controller_id = ""
+        goal.goal_checker_id = self._string("goal_checker_id")
         future = self._follow_path.send_goal_async(goal)
         future.add_done_callback(
             lambda done: self._return_navigation_response(done, generation)

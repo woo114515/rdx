@@ -19,6 +19,8 @@ cylinder_push_approach_execution:
     follow_path_action: /follow_path
     controller_server: /controller_server
     controller_plugin: FollowPath
+    # Task 2 keeps the vendor general checker; Task 3 selects this precise one.
+    goal_checker_id: task3_goal_checker
     arming_timeout: 10.0
     plan_timeout: 120.0
     scan_timeout: 0.75
