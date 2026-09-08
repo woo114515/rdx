@@ -21,9 +21,11 @@ color_object_detector:
     hsv.blue.range_count: 1
     hsv.blue.lower_1: [93, 220, 100]
     hsv.blue.upper_1: [104, 255, 255]
-    hsv.green.range_count: 1
-    hsv.green.lower_1: [54, 40, 85]
-    hsv.green.upper_1: [75, 120, 200]
+    hsv.green.range_count: 2
+    hsv.green.lower_1: [74, 70, 55]
+    hsv.green.upper_1: [85, 230, 135]
+    hsv.green.lower_2: [63, 73, 52]
+    hsv.green.upper_2: [86, 255, 133]
     hsv.red.range_count: 2
     hsv.red.lower_1: [0, 155, 90]
     hsv.red.upper_1: [4, 255, 195]
@@ -69,6 +71,11 @@ cylinder_candidate_validator:
     projection_frame: lidar_link
     center_normalized_x: -0.069
     radians_per_normalized_x: -0.3926990817
+    # Stationary 13-point calibration collected on 2026-09-07. The samples
+    # span 0.669 rad and 1.589 m; leave-one-out RMSE is 0.0195 normalized-x.
+    projection_model: polynomial_range
+    projection_coefficients: [0.0156991059397, -2.55105603026, -0.0974005459428, -1.14019421997, -0.0244140933769, -0.198560842383]
+    projection_diagnostics_topic: /cylinder_validation/projection_diagnostics
     minimum_normalized_window: 0.08
     normalized_window_padding: 0.03
     # The two-point linear camera/LiDAR projection loses accuracy near image

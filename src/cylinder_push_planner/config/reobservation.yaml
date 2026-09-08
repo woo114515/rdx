@@ -1,0 +1,46 @@
+cylinder_reobservation:
+  ros__parameters:
+    snapshot_topic: /cylinder_snapshot/candidates
+    validated_topic: /cylinder_snapshot/validated_objects
+    scan_topic: /scan
+    fixed_frame: map
+    robot_frame: base_footprint
+    compute_path_action: /compute_path_to_pose
+    # Execute the exact path that passed the cylinder-envelope check. Using
+    # NavigateToPose here would allow Nav2 to compute a different route.
+    follow_path_action: /follow_path
+    controller_server: /controller_server
+    controller_plugin: FollowPath
+    stop_topic: /cmd_vel
+
+    # The combined launch overrides this only when the operator explicitly
+    # passes enable_reobservation_motion:=true.
+    execution_enabled: false
+    require_zero_lateral_velocity: true
+
+    collection_duration: 5.0
+    # Do not plan from a transient post-motion candidate set. Candidate count
+    # and positions must remain stable for this many consecutive publications.
+    collection_timeout: 12.0
+    stable_snapshot_updates: 8
+    stable_candidate_motion: 0.06
+    # A newly exposed cylinder should be near the field accepted before motion;
+    # distant wall fragments must not enlarge the temporary safety envelope.
+    maximum_reference_distance: 0.50
+    settling_duration: 1.0
+    # The temporary envelope is built from visible cylinders. Reserve another
+    # target spacing for the hidden cylinder plus robot-centre clearance.
+    robot_center_clearance: 0.25
+    occluded_object_allowance: 0.30
+    viewpoint_travel_distance: 0.30
+    minimum_viewpoint_angle: 0.10
+    maximum_viewpoint_angle: 0.436332313
+    maximum_single_path_length: 0.75
+    maximum_total_path_length: 1.0
+    maximum_attempts: 3
+    right_preference_bonus: 0.05
+
+    input_timeout: 1.0
+    scan_timeout: 1.0
+    navigation_timeout: 20.0
+    transform_timeout: 0.20

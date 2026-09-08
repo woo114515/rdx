@@ -82,6 +82,27 @@ def extract_candidates(
         else:
             groups.append([point])
 
+    # A 360-degree LaserScan is circular, although its ranges are stored in a
+    # linear array. A target crossing the zero-angle seam therefore appears as
+    # the last and first groups. Join those groups before applying the minimum
+    # point and diameter filters. Do not do this for limited-field scanners,
+    # whose array ends represent genuinely separate viewing directions.
+    scan_span = len(ranges) * angle_increment
+    full_circle_tolerance = max(2.0 * angle_increment, 0.05)
+    if (
+        scan_span >= 2.0 * math.pi - full_circle_tolerance
+        and len(groups) >= 2
+        and groups[0]
+        and groups[-1]
+    ):
+        boundary_gap = math.hypot(
+            groups[0][0][0] - groups[-1][-1][0],
+            groups[0][0][1] - groups[-1][-1][1],
+        )
+        if boundary_gap <= maximum_point_gap:
+            groups[0] = groups[-1] + groups[0]
+            groups.pop()
+
     candidates = []
     for group in groups:
         if len(group) < minimum_points:

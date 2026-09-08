@@ -21,6 +21,7 @@ from .sampling import HsvPixel, extract_hsv_patch
 LABEL_KEYS = {
     ord("b"): "blue",
     ord("g"): "green",
+    ord("k"): "black",
     ord("r"): "red",
     ord("y"): "yellow_distractor",
     ord("n"): "background",
@@ -77,7 +78,7 @@ class HsvSamplerNode(Node):
         self.create_timer(1.0 / 30.0, self._render)
         self.get_logger().info(
             f"Sampling {topic}; output={self._output_path}; "
-            "keys: b/g/r/y/n, u=undo, s=save, q=save and quit"
+            "keys: b/g/k/r/y/n, u=undo, s=save, q=save and quit"
         )
 
     @property
@@ -157,7 +158,7 @@ class HsvSamplerNode(Node):
             )
         status = f"label={label} samples={sample_count} radius={self._patch_radius}"
         help_text = (
-            "b/g/r target  y yellow-noise  n background  "
+            "b/g/k/r target  y yellow-noise  n background  "
             "u undo  s save  q quit"
         )
         cv2.rectangle(image, (0, 0), (image.shape[1], 58), (0, 0, 0), -1)

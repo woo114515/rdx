@@ -16,6 +16,7 @@ setup(
         ("share/cylinder_field_mapping/launch", glob("launch/*.launch.py")),
     ],
     install_requires=["setuptools"],
+    tests_require=["pytest"],
     zip_safe=True,
     maintainer="woo114515",
     maintainer_email="woo114515@users.noreply.github.com",

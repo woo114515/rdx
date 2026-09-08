@@ -1,0 +1,5 @@
+geometry_msgs/Point[] centers
+float64 radius
+---
+bool success
+string message

@@ -52,8 +52,7 @@ Not implemented yet:
 - circle-model scoring against recorded MS200 data;
 - optimal global color assignment when competing evidence cannot be resolved by
   the current per-candidate vote;
-- active viewpoint changes;
-- approach, navigation, or pushing.
+- target approach, push trajectory generation, or sorting execution.
 
 The next gate is a stationary real-world recording. The candidate extractor must
 reliably reproduce the visible physical objects before any motion feature is
@@ -142,6 +141,69 @@ be treated as permanent physical-object identities. This stationary perception
 stage is closed; the next stage is motion-free selection and visualization of a
 target, approach pose, envelope exit curve, and destination push path.
 
+Each successfully finalized delivery also records a small map-frame exclusion
+zone around that destination. The snapshot builder applies all recorded zones
+before accumulating candidates for the next cycle. This is necessary because
+the delivered cylinder remains physically visible to LiDAR even though it is
+no longer part of the remaining inventory. Exclusions are replaced only while
+snapshot collection is stopped, and the destination planner rejects overlap
+with any cylinder that is still pending.
+
+## First-push geometric preview — 2026-09-07
+
+The first motion-free pushing preview now excludes the selected right-side
+cylinder from protection geometry, computes the convex hull of the remaining
+cylinders, and expands that hull by a configurable robot-centre clearance. This
+is tighter than continuing to protect the initial all-cylinder circle while
+still preventing the chassis from entering the remaining cluster. The original
+all-cylinder enclosing circle is retained as a task-start reference and each
+color destination must lie outside it.
+
+The planner publishes a staging pose, the selected cylinder's sampled curved
+path, the corresponding robot-centre pushing path, a release retreat, and a
+return-to-task-start path. Both robot paths are rejected if they cross the
+expanded remaining-cylinder hull; the cylinder path has its own radius margin.
+The planner itself still publishes preview markers and `nav_msgs/Path` messages
+only. A separate default-disabled execution node now implements occupancy-map
+checking, Nav2 approach, LiDAR contact monitoring, closed-loop low-speed pushing,
+release, return, and reduced-inventory resnapshot. None of those motion stages
+has yet passed real-robot validation.
+
+The execution increment adds an independently gated push-cycle executor. It
+first asks Nav2 for a costmap-checked route to the staging pose, rejects
+that route if any sampled segment enters the expanded remaining-cylinder
+polygon, and follows the checked route without replanning. Motion is disabled
+by default and requires an explicit launch flag followed by separate arm and
+start service calls. The node watches LiDAR, TF, navigation duration, arm
+expiry, action results, and polygon entry; every fault cancels and requests zero
+velocity. It always stops at a Nav2-safe pre-contact staging pose. A separately
+armed low-speed contact stage covers the final 0.25 m and stops again before
+push authorization. The pushing stage is forward-only and low speed, watches
+the target corridor, nearby non-target obstacles, TF, LiDAR freshness, timeout,
+and the expanded remaining-cylinder polygon. Release and return have their own
+arm/start gate;
+the robot first reverses 0.15 m under rear-LiDAR monitoring, then follows a
+fresh Nav2 collision-checked path home. A final explicit service resets the old
+evidence, decrements the delivered color, and starts the reduced snapshot.
+Motion remains disabled by default and this code has not yet passed a real-robot
+motion test.
+
+The first valid plan captures a task-home pose. Every later color destination
+slot and return goal remains anchored to this same pose; only the next approach
+starts from the live robot pose. Normal per-cycle plan reset preserves the
+anchor and the initial per-color counts. A separate
+`/cylinder_push_plan/reset_task` service clears them before a completely new
+field. Snapshot exclusions and reduced inventory are owned by the snapshot
+node and must also be explicitly cleared/restored for a new field.
+
+The post-return snapshot now has an explicit inventory transition interface.
+`/cylinder_snapshot/set_inventory` is accepted only while collection is stopped
+and unlocked. It preserves the configured color schema but decrements the color
+that was actually delivered, so the first successful blue push changes 2/2/2 to
+1/2/2. This removes the earlier assumption that every cycle must rediscover six
+objects. It is infrastructure only: a cylinder must not be counted as delivered
+until the future motion controller confirms the push and safe return.
+
 The validator now locks automatically on the first frame whose validated color
 counts exactly match the configured inventory. This intentionally freezes the
 earliest complete snapshot before longer-running SLAM drift can create
@@ -160,8 +222,37 @@ motion-free pipeline can be started with:
 ros2 launch cylinder_push_planner task3_planning.launch.py
 ```
 
-It starts the snapshot builder, color detector, candidate validator, and
-selection planner. Camera, LiDAR, mapping, TF, and base drivers remain external
-prerequisites. The combined launch must not be run together with the individual
-snapshot or LiDAR-first validation launches, because duplicate node instances
-would process and publish the same topics.
+It starts the snapshot builder, color detector, candidate validator, selection
+planner, and bounded reobservation controller. Camera, LiDAR, mapping, TF, Nav2,
+and base drivers remain external prerequisites. The combined launch must not be
+run together with the individual snapshot or LiDAR-first validation launches,
+because duplicate node instances would process and publish the same topics.
+
+## Active viewpoint recovery
+
+An incomplete snapshot no longer has to be abandoned immediately. The
+reobservation controller estimates a temporary envelope from the currently
+visible candidates and produces left and right observation poses on an outside
+clearance circle. Nav2 computes both paths. Any path that enters the clearance
+circle, exceeds the per-move limit, or would exceed the total retry distance is
+rejected. The shorter valid option is used, with a small configurable preference
+for the right-hand viewpoint. Because the temporary envelope is derived from
+visible returns, its exclusion radius also reserves one 30 cm target spacing for
+the unseen cylinder and a separate robot-centre clearance.
+
+Execution is disabled by default. Preview mode publishes the two poses, chosen
+path, clearance circle, and status without issuing a navigation goal. Explicit
+execution delegates movement to Nav2, monitors live `/scan` and TF, cancels on
+sensor loss or timeout, publishes zero velocity on every stop path, waits for
+the platform to settle, then resets both spatial and color evidence before a
+new stationary collection. It stops after three attempts or one metre of total
+planned travel. This is a recovery stage only; it does not approach or push a
+cylinder.
+
+The vendor DWB configuration originally allowed `max_vel_y: 0.26`, which could
+turn a viewpoint goal into direct mecanum strafing. The tracked vendor patch at
+`reference/vendor-patches/2026-09-07/yahboomcar-nav-no-strafe.patch` sets
+`max_vel_y` to zero and `vy_samples` to one. The reobservation node also checks
+the live controller parameters and refuses execution if lateral velocity is
+enabled, so restoring a vendor configuration cannot silently reintroduce this
+motion mode.

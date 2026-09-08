@@ -7,6 +7,9 @@ cylinder_snapshot_builder:
     fixed_frame: map
     # Empty lists accept any count above minimum_object_count. To add or remove
     # a color, edit these lists and the matching HSV ranges in perception.yaml.
+    # Between push cycles, /cylinder_snapshot/set_inventory may atomically
+    # replace these counts after /cylinder_snapshot/reset. Zero is accepted for
+    # a known color that has already been completely delivered.
     inventory_colors: [blue, green, red]
     inventory_counts: [2, 2, 2]
     minimum_object_count: 1
@@ -43,3 +46,7 @@ cylinder_snapshot_builder:
     workspace_max_x: 10.0
     workspace_min_y: -10.0
     workspace_max_y: 10.0
+    # The execution controller adds delivered sorting locations here between
+    # cycles so already-sorted cylinders cannot satisfy the remaining inventory.
+    minimum_exclusion_radius: 0.10
+    maximum_exclusion_radius: 1.00

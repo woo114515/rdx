@@ -9,6 +9,10 @@ from color_object_sorter_interfaces.msg import (
     CylinderCandidate,
     CylinderSnapshot,
 )
+from color_object_sorter_interfaces.srv import (
+    SetObjectInventory,
+    SetSnapshotExclusions,
+)
 from geometry_msgs.msg import Point
 from nav_msgs.msg import OccupancyGrid
 from rclpy.duration import Duration
@@ -34,7 +38,7 @@ from .lidar_candidates import (
     select_primary_spatial_group,
 )
 from .inventory import ObjectInventory
-from .map_filter import GridMap, is_compact_map_obstacle
+from .map_filter import GridMap, inside_exclusion_zone, is_compact_map_obstacle
 
 
 class CylinderSnapshotNode(Node):
@@ -74,6 +78,8 @@ class CylinderSnapshotNode(Node):
             "workspace_max_x": 10.0,
             "workspace_min_y": -10.0,
             "workspace_max_y": 10.0,
+            "minimum_exclusion_radius": 0.10,
+            "maximum_exclusion_radius": 1.00,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -81,8 +87,18 @@ class CylinderSnapshotNode(Node):
         self.declare_parameter("inventory_counts", Parameter.Type.INTEGER_ARRAY)
 
         self._inventory = ObjectInventory.from_lists(
-            self.get_parameter("inventory_colors").value,
-            self.get_parameter("inventory_counts").value,
+            self.get_parameter_or(
+                "inventory_colors",
+                Parameter(
+                    "inventory_colors", Parameter.Type.STRING_ARRAY, []
+                ),
+            ).value,
+            self.get_parameter_or(
+                "inventory_counts",
+                Parameter(
+                    "inventory_counts", Parameter.Type.INTEGER_ARRAY, []
+                ),
+            ).value,
         )
 
         self._accumulator = CandidateAccumulator(
@@ -93,6 +109,8 @@ class CylinderSnapshotNode(Node):
         self._collecting = False
         self._locked = False
         self._map: GridMap | None = None
+        self._exclusions: tuple[tuple[float, float], ...] = ()
+        self._exclusion_radius = 0.0
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
         self._publisher = self.create_publisher(
@@ -118,6 +136,16 @@ class CylinderSnapshotNode(Node):
         self.create_service(Trigger, "/cylinder_snapshot/start", self._start)
         self.create_service(Trigger, "/cylinder_snapshot/lock", self._lock)
         self.create_service(Trigger, "/cylinder_snapshot/reset", self._reset)
+        self.create_service(
+            SetObjectInventory,
+            "/cylinder_snapshot/set_inventory",
+            self._set_inventory,
+        )
+        self.create_service(
+            SetSnapshotExclusions,
+            "/cylinder_snapshot/set_exclusions",
+            self._set_exclusions,
+        )
         self.get_logger().info(
             "LiDAR-first snapshot builder ready; motion output is absent"
         )
@@ -173,6 +201,8 @@ class CylinderSnapshotNode(Node):
                 continue
             x, y = _transform_xy(item.x, item.y, transform.transform)
             if not self._inside_workspace(x, y):
+                continue
+            if self._inside_exclusion(x, y):
                 continue
             if not self._passes_map_filter(x, y):
                 continue
@@ -246,6 +276,14 @@ class CylinderSnapshotNode(Node):
             and abs(y) <= self._float("observation_max_lateral")
         )
 
+    def _inside_exclusion(self, x: float, y: float) -> bool:
+        return inside_exclusion_zone(
+            x,
+            y,
+            self._exclusions,
+            self._exclusion_radius,
+        )
+
     def _passes_map_filter(self, x: float, y: float) -> bool:
         if self._map is None:
             return not bool(self.get_parameter("require_map_filter").value)
@@ -298,6 +336,59 @@ class CylinderSnapshotNode(Node):
         response.message = "snapshot reset"
         return response
 
+    def _set_inventory(self, request, response):
+        """Replace the expected inventory only while collection is stopped."""
+
+        if self._collecting or self._locked:
+            response.success = False
+            response.message = "reset the snapshot before changing inventory"
+            return response
+        try:
+            inventory = ObjectInventory.from_lists(request.colors, request.counts)
+        except ValueError as error:
+            response.success = False
+            response.message = str(error)
+            return response
+        self._inventory = inventory
+        self._publish(Time().to_msg(), ())
+        response.success = True
+        summary = ",".join(
+            f"{color}:{count}" for color, count in inventory.counts
+        )
+        response.message = f"inventory updated:{summary or 'unconstrained'}"
+        return response
+
+    def _set_exclusions(self, request, response):
+        """Replace delivered-object exclusion zones while collection is stopped."""
+
+        if self._collecting or self._locked:
+            response.success = False
+            response.message = "reset the snapshot before changing exclusions"
+            return response
+        radius = float(request.radius)
+        if request.centers and not (
+            self._float("minimum_exclusion_radius")
+            <= radius
+            <= self._float("maximum_exclusion_radius")
+        ):
+            response.success = False
+            response.message = "exclusion radius is outside configured limits"
+            return response
+        if any(
+            not math.isfinite(value)
+            for center in request.centers
+            for value in (center.x, center.y)
+        ):
+            response.success = False
+            response.message = "exclusion centers must be finite"
+            return response
+        self._exclusions = tuple((center.x, center.y) for center in request.centers)
+        self._exclusion_radius = radius if self._exclusions else 0.0
+        self._publish(Time().to_msg(), ())
+        response.success = True
+        response.message = f"configured {len(self._exclusions)} exclusion zones"
+        return response
+
     def _publish_markers(self, snapshot: CylinderSnapshot) -> None:
         output = MarkerArray()
         clear = Marker()
@@ -319,6 +410,23 @@ class CylinderSnapshotNode(Node):
             marker.color.g = 0.75 if snapshot.ready else 0.25
             marker.color.b = 0.1
             marker.color.a = 0.25
+            output.markers.append(marker)
+        for index, (center_x, center_y) in enumerate(self._exclusions):
+            marker = Marker()
+            marker.header = snapshot.header
+            marker.ns = "delivered_exclusions"
+            marker.id = index
+            marker.type = Marker.CYLINDER
+            marker.action = Marker.ADD
+            marker.pose.position = Point(x=center_x, y=center_y, z=0.005)
+            marker.pose.orientation.w = 1.0
+            marker.scale.x = 2.0 * self._exclusion_radius
+            marker.scale.y = 2.0 * self._exclusion_radius
+            marker.scale.z = 0.01
+            marker.color.r = 0.55
+            marker.color.g = 0.55
+            marker.color.b = 0.55
+            marker.color.a = 0.35
             output.markers.append(marker)
         self._marker_publisher.publish(output)
 

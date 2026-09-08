@@ -61,3 +61,32 @@ ros2 topic echo /driver_health
 - SunriseRobotLib 离线假串口测试通过读超时、报告新鲜度和短写失败场景。
 - 已部署 SunriseRobotLib 与六个厂商源码文件，三个受影响 ROS 包在 aarch64/TROS Humble 构建成功；官方三个 launch 通过无启动解析。未发送运动命令，低速实车验收仍待完成。
 - 首次启动发现 `0.30 s` 反馈健康阈值会把约 `0.33 s` 的正常抖动误判为故障；已改为 `1.00 s`，命令停车超时仍为 `0.25 s`，并捕获串口关闭竞态的 `TypeError`。驱动已重新构建，待重新启动验证。
+
+## 2026-09-07 编码器重复样本故障
+
+Task 3 全栈启动时，`Mcnamu_driver` 在重复读取同一编码器反馈后，以
+`encoder sample interval must be positive` 退出。根因是驱动根据反馈年龄
+反推采样时刻，而定时器可能在新串口帧到达前再次读取同一帧，使推算间隔
+等于零、略微倒退，或仅有浮点抖动。
+
+修复保存在
+`reference/vendor-patches/2026-09-07/yahboomcar-encoder-sample-guard.patch`：
+只在推算采样时刻至少前进 1 ms 时更新编码器基准并发布 `/wheel_speed`；
+重复、倒退或非有限样本跳过本次轮速发布，不再让异常穿透 ROS 定时器。
+`/motor_encoder` 及同一批次中的其他新鲜反馈接口保持不变。
+
+该补丁已部署到机器人并构建 `yahboomcar_bringup`。部署前文件保存在
+`/home/sunrise/vendor-backups/2026-09-07-before-encoder-sample-guard/`。
+底盘安全测试结果为 `22 passed`；不发送 `/cmd_vel` 的 20 秒冒烟测试中，
+`/vel_raw_stamped`、`/motor_encoder` 和 `/wheel_speed` 均约为 10 Hz，驱动
+持续运行至外层 timeout 正常结束；随后 12 秒复测同样没有异常退出。
+Python 运行时解析到 build 中的新模块并确认包含 `encoder_sample_interval`。
+短时窗口内 `/driver_health` 未被 ROS CLI 发现，因此该话题仍需随完整硬件
+bringup 单独复核，不能把本次结果解释为整个导航栈已经通过实车验收。
+
+重启机器人后又执行了 25 秒 `laser_bringup_launch.py` 无运动冒烟测试：
+`/scan` 与 `/odom` 均约为 10 Hz，`Mcnamu_driver` 没有在运行期间再次出现
+编码器间隔异常。`base_node` 同期记录过一次近零反馈间隔并按既有逻辑丢弃，
+也印证“重复/非递增反馈应跳过而非杀死节点”的处理方向。测试结束时外层
+`timeout` 与 launch 同时传递 SIGINT，产生退出阶段的 `KeyboardInterrupt`
+和 publisher context 日志；它发生在测试主动停止之后，不是运行期复发。

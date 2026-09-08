@@ -1,0 +1,21 @@
+diff --git a/params/dwb_nav_params.yaml b/params/dwb_nav_params.yaml
+--- a/params/dwb_nav_params.yaml
++++ b/params/dwb_nav_params.yaml
+@@ -162,7 +162,7 @@ controller_server:
+       min_vel_x: -0.5
+       min_vel_y: 0.0
+       max_vel_x: 0.26
+-      max_vel_y: 0.26
++      max_vel_y: 0.0
+       max_vel_theta: 1.0
+       min_speed_xy: -0.5
+       max_speed_xy: 0.26
+@@ -176,7 +176,7 @@ controller_server:
+       decel_lim_y: -0.5
+       decel_lim_theta: -1.0
+       vx_samples: 20
+-      vy_samples: 5
++      vy_samples: 1
+       vtheta_samples: 20
+       sim_time: 1.5
+       linear_granularity: 0.05

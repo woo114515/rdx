@@ -21,6 +21,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CylinderSnapshot.msg"
   "msg/ValidatedCylinder.msg"
   "msg/ValidatedCylinderArray.msg"
+  "srv/SetObjectInventory.srv"
+  "srv/SetSnapshotExclusions.srv"
   DEPENDENCIES builtin_interfaces geometry_msgs sensor_msgs std_msgs
 )
 

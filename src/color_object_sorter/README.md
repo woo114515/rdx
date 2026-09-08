@@ -1,10 +1,10 @@
 # color_object_sorter
 
-Task 3 perception implementation. The physical targets changed on 2026-09-06
-from blue/legacy-green/pink to blue/replacement-green/red. Blue remains valid;
-replacement-green and red were recalibrated, deployed, and visually reviewed
-without obvious misclassification in the tested scene on 2026-09-06. This
-package has no velocity publisher and cannot move the robot.
+Task 3 perception implementation. The current physical targets are blue, a new
+green, and red. The pink, earlier green, and black targets are retired. The new
+green was calibrated from a dedicated green/background dataset, while the
+previously accepted blue and red ranges remain in use. This package has no
+velocity publisher and cannot move the robot.
 
 The configured color names are not fixed in the detector algorithm. To add a
 new color, append its name to `colors` in `config/perception.yaml`, then add
@@ -26,9 +26,9 @@ maps image center `normalized_x=-0.069` to LiDAR 0 rad and
 the scan is stale or no multi-beam cluster exists. Neither perception node can
 publish velocity commands.
 
-The former pink reliability result is historical and does not apply to the new
-red target. New red and replacement-green thresholds were derived from the
-2026-09-06 replacement-target dataset and still require live acceptance.
+The former pink, earlier-green, and black reliability results are historical
+and do not apply to the current target inventory. See
+`docs/task3-hsv-sampling.md` for the current calibration evidence.
 
 `temporal_object_confirmation` consumes localized observations and publishes
 only stable tracks on `/color_sorter/confirmed_objects`. Its one-second window
@@ -61,6 +61,13 @@ reported as `occluded`. Same-color image contours can still merge, and a fully
 hidden object cannot be recovered from a single 2D scan; these cases require a
 new viewing position and must not trigger motion.
 
+The candidate validator supports a lightweight range-aware camera/LiDAR
+projection model. The accepted legacy two-point model remains the default until
+an operator captures a stationary multi-angle, multi-range dataset and enables
+the fitted model explicitly. Capture, fitting, validation criteria, and the
+projection residual diagnostics topic are documented in
+`docs/task3-camera-lidar-calibration.md`.
+
 ## Detection viewer
 
 Run the repository-provided viewer in a graphical ROS environment:
@@ -73,6 +80,21 @@ It subscribes to `/color_sorter/debug/compressed` with sensor-data QoS, avoiding
 the `rqt_image_view` compressed-transport plugin conflict seen in the supplied
 VM. Press `q` or Escape in the window to exit. The viewer has no publishers and
 cannot command robot motion.
+
+## Six-cylinder RViz view
+
+Open the preconfigured lightweight map view with:
+
+```bash
+ros2 launch color_object_sorter task3_visualization.launch.py
+```
+
+It fixes the frame to `map` and loads only the occupancy map, the current laser
+scan, and `/cylinder_snapshot/validation_markers`. The scan has zero decay, the
+subscriber queues have depth one, and RViz renders at 10 FPS to reduce long-run
+network and rendering pressure. Raw candidate markers and navigation costmaps
+are intentionally omitted; the colored markers are the validated six-cylinder
+result.
 
 ## HSV sampling
 

@@ -9,17 +9,22 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/cylinder_push_planner"]),
         ("share/cylinder_push_planner", ["package.xml", "README.md"]),
+        ("share/cylinder_push_planner/config", glob("config/*.yaml")),
         ("share/cylinder_push_planner/launch", glob("launch/*.launch.py")),
     ],
     install_requires=["setuptools"],
+    tests_require=["pytest"],
     zip_safe=True,
     maintainer="woo114515",
     maintainer_email="woo114515@users.noreply.github.com",
-    description="Motion-free target selection and push geometry visualization.",
+    description="Target selection and gated push-cycle execution.",
     license="MIT",
     entry_points={
         "console_scripts": [
             "selection_planner = cylinder_push_planner.selection_node:main",
+            "reobservation = cylinder_push_planner.reobservation_node:main",
+            "approach_execution = cylinder_push_planner.approach_execution_node:main",
+            "push_cycle_execution = cylinder_push_planner.approach_execution_node:main",
         ],
     },
 )

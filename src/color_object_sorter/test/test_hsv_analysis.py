@@ -58,6 +58,25 @@ def test_reports_background_overlap() -> None:
     assert result.background_overlap == pytest.approx(0.5)
 
 
+def test_black_uses_full_hue_and_saturation_ranges() -> None:
+    samples = {
+        "black": [(1, 0, 0, 15), (2, 90, 255, 25), (3, 179, 80, 35)],
+        "background": [(4, 60, 20, 20), (5, 60, 20, 180)],
+    }
+
+    result = analyse_samples(
+        samples,
+        labels=("black",),
+        hue_margin=0,
+        saturation_margin=0,
+        value_margin=0,
+    )[0]
+
+    assert result.ranges[0].lower == (0, 0, 0)
+    assert result.ranges[0].upper[:2] == (179, 255)
+    assert result.background_overlap == pytest.approx(0.5)
+
+
 def test_rejects_missing_columns(tmp_path) -> None:
     path = tmp_path / "bad.csv"
     path.write_text("label,h,s\nblue,90,200\n", encoding="utf-8")

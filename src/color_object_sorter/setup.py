@@ -14,8 +14,10 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (f"share/{package_name}/config", glob("config/*.yaml")),
         (f"share/{package_name}/launch", glob("launch/*.launch.py")),
+        (f"share/{package_name}/rviz", glob("rviz/*.rviz")),
     ],
     install_requires=["setuptools"],
+    tests_require=["pytest"],
     zip_safe=True,
     maintainer="woo114515",
     maintainer_email="woo114515@users.noreply.github.com",
@@ -30,6 +32,9 @@ setup(
             "hsv_sampler = color_object_sorter.hsv_sampler_node:main",
             "hsv_analyzer = color_object_sorter.hsv_analyzer:main",
             "candidate_validator = color_object_sorter.candidate_validation_node:main",
+            "camera_lidar_capture = color_object_sorter.camera_lidar_capture_node:main",
+            "camera_lidar_calibrator = "
+            "color_object_sorter.camera_lidar_calibrator:main",
         ],
     },
 )

@@ -25,6 +25,22 @@ class GridMap:
             raise ValueError("occupancy grid data size does not match geometry")
 
 
+def inside_exclusion_zone(
+    x: float,
+    y: float,
+    centers: Sequence[tuple[float, float]],
+    radius: float,
+) -> bool:
+    """Return whether a map point belongs to a delivered-object zone."""
+
+    if radius < 0.0:
+        raise ValueError("exclusion radius must not be negative")
+    return radius > 0.0 and any(
+        math.hypot(x - center_x, y - center_y) <= radius
+        for center_x, center_y in centers
+    )
+
+
 def is_compact_map_obstacle(
     grid: GridMap,
     x: float,

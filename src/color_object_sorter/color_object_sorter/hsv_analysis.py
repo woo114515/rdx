@@ -142,15 +142,22 @@ def analyse_samples(
         value = _bounded_quantiles(
             values[:, 2], low_quantile, high_quantile, value_margin, 255
         )
-        ranges = tuple(
-            HsvRange(
-                lower=(hue_low, saturation[0], value[0]),
-                upper=(hue_high, saturation[1], value[1]),
+        if label == "black":
+            # Hue and saturation become unstable when brightness approaches
+            # zero. Black is therefore a full-H/S, low-value classification.
+            ranges = (
+                HsvRange(lower=(0, 0, 0), upper=(179, 255, value[1])),
             )
-            for hue_low, hue_high in _hue_ranges(
-                values[:, 0], low_quantile, high_quantile, hue_margin
+        else:
+            ranges = tuple(
+                HsvRange(
+                    lower=(hue_low, saturation[0], value[0]),
+                    upper=(hue_high, saturation[1], value[1]),
+                )
+                for hue_low, hue_high in _hue_ranges(
+                    values[:, 0], low_quantile, high_quantile, hue_margin
+                )
             )
-        )
         overlap = (
             sum(_matches(pixel, ranges) for pixel in background) / len(background)
             if background

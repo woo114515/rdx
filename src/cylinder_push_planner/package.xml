@@ -2,17 +2,22 @@
 <package format="3">
   <name>cylinder_push_planner</name>
   <version>0.1.0</version>
-  <description>Motion-free target selection and push geometry visualization.</description>
+  <description>Target selection and gated push-cycle execution.</description>
   <maintainer email="woo114515@users.noreply.github.com">woo114515</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>action_msgs</exec_depend>
   <exec_depend>color_object_sorter</exec_depend>
   <exec_depend>color_object_sorter_interfaces</exec_depend>
   <exec_depend>cylinder_field_mapping</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>

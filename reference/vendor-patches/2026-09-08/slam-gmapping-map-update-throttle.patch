@@ -1,0 +1,42 @@
+--- a/slam_gmapping/include/slam_gmapping/slam_gmapping.h
++++ b/slam_gmapping/include/slam_gmapping/slam_gmapping.h
+@@ -90,6 +90,7 @@
+     nav_msgs::msg::OccupancyGrid map_;
+ 
+     tf2::Duration map_update_interval_;
++    tf2::TimePoint last_map_update_;
+     tf2::Transform map_to_odom_;
+     std::mutex map_to_odom_mutex_;
+     std::mutex map_mutex_;
+--- a/slam_gmapping/src/slam_gmapping.cpp
++++ b/slam_gmapping/src/slam_gmapping.cpp
+@@ -65,6 +65,7 @@
+     transform_publish_period_ = 0.05;
+ 
+     map_update_interval_ = tf2::durationFromSec(0.5);
++    last_map_update_ = tf2::TimePointZero;
+     maxUrange_ = 80.0;  maxRange_ = 0.0;
+     minimum_score_ = 0;
+     sigma_ = 0.05;
+@@ -354,8 +355,6 @@
+     if ((laser_count_ % throttle_scans_) != 0)
+         return;
+ 
+-    tf2::TimePoint last_map_update = tf2::TimePointZero;
+-
+     // We can't initialize the mapper until we've got the first scan
+     if(!got_first_scan_)
+     {
+@@ -381,10 +380,10 @@
+         map_to_odom_mutex_.unlock();
+ 
+         tf2::TimePoint timestamp = tf2_ros::fromMsg(scan->header.stamp);
+-        if(!got_map_ || (timestamp - last_map_update) > map_update_interval_)
++        if(!got_map_ || (timestamp - last_map_update_) > map_update_interval_)
+         {
+             updateMap(scan);
+-            last_map_update = tf2_ros::fromMsg(scan->header.stamp);
++            last_map_update_ = timestamp;
+         }
+     }
+ }

@@ -1,0 +1,40 @@
+cylinder_push_selection_planner:
+  ros__parameters:
+    input_topic: /cylinder_snapshot/validated_objects
+    fixed_frame: map
+    robot_frame: base_footprint
+
+    # The selected cylinder is excluded before this keepout is constructed.
+    # 0.21 m represents the robot centre clearance around the remaining hull.
+    # Nav2 stops this far behind the direct push-path start. A separately
+    # armed contact stage crosses this gap at 0.03 m/s.
+    staging_clearance: 0.25
+    robot_center_clearance: 0.21
+    contact_offset: 0.22
+    release_retreat: 0.15
+    envelope_exit_clearance: 0.10
+    # A delivered cylinder is ignored by later LiDAR snapshots inside this
+    # map-frame radius. Planning rejects a destination that would make this
+    # zone overlap any cylinder still waiting in the field.
+    delivered_exclusion_radius: 0.18
+    # Same-color cylinders receive distinct destinations along a tangent to
+    # the direction from task start to the color-zone centre.
+    destination_slot_spacing: 0.18
+    transform_timeout: 0.25
+
+    # Coordinates are relative to the robot pose captured when generate is
+    # called: +x is forward, +y is left. They are transformed into map.
+    destination_colors: [blue, green, red]
+    destinations:
+      blue:
+        x: 1.20
+        y: 0.90
+      green:
+        # The initial cylinder field is normally about 1.2--2.0 m in front of
+        # task home.  Keep the forward sorting zone beyond that field instead
+        # of placing it near the field centre.
+        x: 2.70
+        y: 0.00
+      red:
+        x: 1.20
+        y: -0.90

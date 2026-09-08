@@ -1,0 +1,5 @@
+string[] colors
+int32[] counts
+---
+bool success
+string message

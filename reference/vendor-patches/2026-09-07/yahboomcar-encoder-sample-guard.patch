@@ -1,0 +1,172 @@
+--- a/yahboomcar_bringup/yahboomcar_bringup/Mcnamu_driver.py
++++ b/yahboomcar_bringup/yahboomcar_bringup/Mcnamu_driver.py
+@@ -50,6 +50,18 @@
+     )
+ 
+ 
++def encoder_sample_interval(current_sample, previous_sample, minimum=0.001):
++    """Return elapsed time only when an encoder sample is genuinely newer."""
++    if not isfinite(current_sample):
++        return None
++    if previous_sample is None:
++        return 1.0
++    elapsed = current_sample - previous_sample
++    if not isfinite(elapsed) or elapsed < minimum:
++        return None
++    return elapsed
++
++
+ class YahboomcarDriver(Node):
+     """Bound serial I/O and publish only fresh controller feedback."""
+ 
+@@ -268,12 +280,16 @@
+         mag.magnetic_field.z = mz
+ 
+         counts = tuple(self.car.get_motor_encoder())
+-        elapsed = 1.0
+-        if self._last_encoder_sample is not None:
+-            elapsed = encoder_sample - self._last_encoder_sample
+-        rates = encoder_tick_rates(counts, self._last_encoder_counts, elapsed)
+-        self._last_encoder_counts = counts
+-        self._last_encoder_sample = encoder_sample
++        rates = None
++        elapsed = encoder_sample_interval(
++            encoder_sample, self._last_encoder_sample
++        )
++        if elapsed is not None:
++            rates = encoder_tick_rates(
++                counts, self._last_encoder_counts, elapsed
++            )
++            self._last_encoder_counts = counts
++            self._last_encoder_sample = encoder_sample
+ 
+         self.edition_publisher.publish(Float32(data=float(self.car.get_version())))
+         self.voltage_publisher.publish(
+@@ -284,7 +300,10 @@
+         self.imu_publisher.publish(imu)
+         self.mag_publisher.publish(mag)
+         self.encoder_publisher.publish(Int32MultiArray(data=list(counts)))
+-        self.wheel_speed_publisher.publish(Float32MultiArray(data=list(rates)))
++        if rates is not None:
++            self.wheel_speed_publisher.publish(
++                Float32MultiArray(data=list(rates))
++            )
+ 
+     def rgb_callback(self, message):
+         if self._bus is None:
+--- a/yahboomcar_bringup/test/test_motion_safety.py
++++ b/yahboomcar_bringup/test/test_motion_safety.py
+@@ -5,11 +5,12 @@
+ from geometry_msgs.msg import Twist
+ from yahboomcar_bringup import Mcnamu_driver
+ from yahboomcar_bringup.Mcnamu_driver import (
++    YahboomcarDriver,
+     command_is_stale,
++    encoder_sample_interval,
+     encoder_tick_rates,
+     signed_encoder_delta,
+     sanitize_motion,
+-    yahboomcar_driver,
+ )
+ 
+ 
+@@ -49,6 +50,7 @@
+ 
+     def set_car_motion(self, vx, vy, angular):
+         self.commands.append((vx, vy, angular))
++        return True
+ 
+ 
+ class FakeLogger:
+@@ -64,7 +66,7 @@
+ 
+ 
+ class FakeDriver:
+-    stop_motion = yahboomcar_driver.stop_motion
++    stop_motion = YahboomcarDriver.stop_motion
+ 
+     def __init__(self):
+         self.car = FakeCar()
+@@ -73,13 +75,16 @@
+         self.ylinear_limit = 1.0
+         self.angular_limit = 1.0
+         self.cmd_vel_timeout = 0.25
+-        self._last_cmd_time = None
++        self._last_command = None
+         self._watchdog_stopped = True
+         self._shutting_down = False
+ 
+     def get_logger(self):
+         return self.logger
+ 
++    def _ensure_transport_healthy(self, require_feedback):
++        return True
++
+ 
+ def test_cmd_vel_callback_enforces_limits():
+     driver = FakeDriver()
+@@ -88,10 +93,10 @@
+     message.linear.y = -1.0
+     message.angular.z = 2.0
+ 
+-    yahboomcar_driver.cmd_vel_callback(driver, message)
++    YahboomcarDriver.cmd_vel_callback(driver, message)
+ 
+     assert driver.car.commands == [(1.0, -1.0, 1.0)]
+-    assert driver._last_cmd_time is not None
++    assert driver._last_command is not None
+     assert not driver._watchdog_stopped
+ 
+ 
+@@ -100,19 +105,21 @@
+     message = Twist()
+     message.linear.x = math.nan
+ 
+-    yahboomcar_driver.cmd_vel_callback(driver, message)
++    YahboomcarDriver.cmd_vel_callback(driver, message)
+ 
+     assert driver.car.commands == [(0.0, 0.0, 0.0)] * 3
+-    assert driver.logger.errors == ["rejected non-finite cmd_vel"]
++    assert driver.logger.errors == [
++        "motion command must contain finite values"
++    ]
+ 
+ 
+ def test_watchdog_commands_zero_after_timeout(monkeypatch):
+     driver = FakeDriver()
+-    driver._last_cmd_time = 10.0
++    driver._last_command = 10.0
+     driver._watchdog_stopped = False
+     monkeypatch.setattr(Mcnamu_driver.time, "monotonic", lambda: 10.25)
+ 
+-    yahboomcar_driver.watchdog_callback(driver)
++    YahboomcarDriver.watchdog_callback(driver)
+ 
+     assert driver.car.commands == [(0.0, 0.0, 0.0)]
+     assert driver._watchdog_stopped
+@@ -142,3 +149,25 @@
+ def test_encoder_tick_rates_rejects_invalid_interval():
+     with pytest.raises(ValueError):
+         encoder_tick_rates((1, 2, 3, 4), (0, 0, 0, 0), 0.0)
++
++
++def test_encoder_sample_interval_accepts_new_sample():
++    assert encoder_sample_interval(10.1, 10.0) == pytest.approx(0.1)
++
++
++def test_encoder_sample_interval_initializes_first_sample():
++    assert encoder_sample_interval(10.0, None) == 1.0
++
++
++@pytest.mark.parametrize(
++    ("current", "previous"),
++    [
++        (10.0, 10.0),
++        (9.9, 10.0),
++        (10.0005, 10.0),
++        (math.nan, 10.0),
++        (math.inf, 10.0),
++    ],
++)
++def test_encoder_sample_interval_skips_non_new_samples(current, previous):
++    assert encoder_sample_interval(current, previous) is None

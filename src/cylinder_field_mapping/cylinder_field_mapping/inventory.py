@@ -26,8 +26,10 @@ class ObjectInventory:
             raise ValueError("inventory color names cannot be empty")
         if len(names) != len(set(names)):
             raise ValueError("inventory color names must be unique")
-        if any(count < 1 for count in values):
-            raise ValueError("inventory counts must be positive")
+        if any(count < 0 for count in values):
+            raise ValueError("inventory counts must be non-negative")
+        if values and not any(values):
+            raise ValueError("inventory must contain at least one object")
         return cls(tuple(zip(names, values)))
 
     @property

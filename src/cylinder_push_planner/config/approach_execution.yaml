@@ -1,0 +1,65 @@
+cylinder_push_approach_execution:
+  ros__parameters:
+    # This must be overridden explicitly at launch time before arm can succeed.
+    execution_enabled: false
+    plan_status_topic: /cylinder_push_plan/status
+    snapshot_topic: /cylinder_snapshot/validated_objects
+    staging_pose_topic: /cylinder_push_plan/staging_pose
+    approach_path_topic: /cylinder_push_plan/approach_path
+    target_path_topic: /cylinder_push_plan/target_path
+    push_path_topic: /cylinder_push_plan/robot_push_path
+    return_path_topic: /cylinder_push_plan/return_path
+    keepout_topic: /cylinder_push_plan/remaining_keepout
+    checked_path_topic: /cylinder_push_execution/checked_approach_path
+    scan_topic: /scan
+    stop_topic: /cmd_vel
+    fixed_frame: map
+    robot_frame: base_footprint
+    compute_path_action: /compute_path_to_pose
+    follow_path_action: /follow_path
+    controller_server: /controller_server
+    controller_plugin: FollowPath
+    arming_timeout: 10.0
+    plan_timeout: 120.0
+    scan_timeout: 0.75
+    navigation_timeout: 30.0
+    transform_timeout: 0.20
+    maximum_approach_length: 3.0
+    maximum_goal_error: 0.15
+    require_zero_lateral_velocity: true
+
+    # Nav2 stops at a safe pre-contact pose. This stage creeps across the final
+    # 0.25 m while the target remains visible in the narrow centre corridor.
+    contact_speed: 0.03
+    contact_maximum_angular_speed: 0.15
+    contact_acquire_maximum_distance: 0.65
+    contact_goal_tolerance: 0.04
+    contact_timeout: 12.0
+
+    # Direct pushing is intentionally slow and remains behind a second arm/start
+    # gate after the independently verified Nav2 approach has completed.
+    push_speed: 0.06
+    push_angular_gain: 1.5
+    push_maximum_angular_speed: 0.25
+    push_lookahead: 0.12
+    push_goal_tolerance: 0.06
+    maximum_push_deviation: 0.12
+    push_timeout: 45.0
+    target_maximum_distance: 0.32
+    target_corridor_half_width: 0.07
+    target_loss_timeout: 0.60
+    obstacle_stop_distance: 0.32
+    obstacle_half_width: 0.18
+
+    # Back away before asking Nav2 for a fresh collision-checked home path.
+    release_distance: 0.15
+    release_speed: 0.04
+    release_timeout: 8.0
+    # Completion is measured along the initial rearward axis. Sideways drift
+    # or heading change stops the manoeuvre instead of counting as retreat.
+    maximum_release_lateral_deviation: 0.05
+    maximum_release_heading_error: 0.15
+    maximum_release_pose_step: 0.05
+    rear_stop_distance: 0.25
+    return_timeout: 45.0
+    maximum_return_length: 3.5

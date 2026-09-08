@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 import math
+import threading
 
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from color_object_sorter_interfaces.msg import (
     ColorObjectArray,
     CylinderSnapshot,
@@ -18,6 +21,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_srvs.srv import Trigger
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -28,6 +32,7 @@ from .candidate_validation import (
     inventory_matches,
     visual_association_window,
 )
+from .camera_lidar_projection import CameraLidarProjection
 
 
 class CandidateValidationNode(Node):
@@ -43,6 +48,9 @@ class CandidateValidationNode(Node):
             "projection_frame": "lidar_link",
             "center_normalized_x": -0.069,
             "radians_per_normalized_x": -0.3926990817,
+            "projection_model": "legacy_linear",
+            "projection_coefficients": [-0.069, -2.546479089, 0.0, 0.0, 0.0, 0.0],
+            "projection_diagnostics_topic": "/cylinder_validation/projection_diagnostics",
             "minimum_normalized_window": 0.08,
             "normalized_window_padding": 0.03,
             "edge_window_start": 0.75,
@@ -62,9 +70,18 @@ class CandidateValidationNode(Node):
             self._int("minimum_visible_observations"),
             self._float("minimum_color_confidence"),
         )
+        self._projection = CameraLidarProjection(
+            model=self._string("projection_model"),
+            center_normalized_x=self._float("center_normalized_x"),
+            radians_per_normalized_x=self._float("radians_per_normalized_x"),
+            coefficients=self.get_parameter("projection_coefficients").value,
+        )
         self._snapshot: CylinderSnapshot | None = None
         self._locked = False
         self._last_output: ValidatedCylinderArray | None = None
+        self._generation = 0
+        self._state_lock = threading.RLock()
+        self._service_group = MutuallyExclusiveCallbackGroup()
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
         latched = QoSProfile(
@@ -78,6 +95,11 @@ class CandidateValidationNode(Node):
         self._marker_publisher = self.create_publisher(
             MarkerArray, self._string("marker_topic"), latched
         )
+        self._diagnostics_publisher = self.create_publisher(
+            String,
+            self._string("projection_diagnostics_topic"),
+            10,
+        )
         self.create_subscription(
             CylinderSnapshot,
             self._string("candidates_topic"),
@@ -90,20 +112,33 @@ class CandidateValidationNode(Node):
             self._on_detections,
             10,
         )
-        self.create_service(Trigger, "/cylinder_validation/lock", self._lock)
-        self.create_service(Trigger, "/cylinder_validation/reset", self._reset)
+        self.create_service(
+            Trigger,
+            "/cylinder_validation/lock",
+            self._lock,
+            callback_group=self._service_group,
+        )
+        self.create_service(
+            Trigger,
+            "/cylinder_validation/reset",
+            self._reset,
+            callback_group=self._service_group,
+        )
         self.get_logger().info(
             "Candidate visual validation ready; motion output is absent"
         )
 
     def _on_snapshot(self, message: CylinderSnapshot) -> None:
-        if not self._locked:
-            self._snapshot = message
+        with self._state_lock:
+            if not self._locked:
+                self._snapshot = message
 
     def _on_detections(self, message: ColorObjectArray) -> None:
-        if self._locked or self._snapshot is None:
-            return
-        snapshot = self._snapshot
+        with self._state_lock:
+            if self._locked or self._snapshot is None:
+                return
+            snapshot = self._snapshot
+            generation = self._generation
         if not snapshot.header.frame_id:
             return
         try:
@@ -130,8 +165,8 @@ class CandidateValidationNode(Node):
                 candidate.position.y,
                 transform.transform,
             )
-            visibility, normalized_x = self._visibility(local_x, local_y)
-            projections[candidate.candidate_id] = (visibility, normalized_x)
+            visibility, projection = self._visibility(local_x, local_y)
+            projections[candidate.candidate_id] = (visibility, projection)
 
         visible_candidates = [
             item
@@ -155,7 +190,10 @@ class CandidateValidationNode(Node):
             for item in detections
         ]
         associations = associate_visual_detections(
-            [projections[item.candidate_id][1] for item in visible_candidates],
+            [
+                projections[item.candidate_id][1].normalized_x
+                for item in visible_candidates
+            ],
             [item.normalized_x for item in detections],
             detection_windows,
             self._float("visual_ambiguity_margin"),
@@ -166,7 +204,8 @@ class CandidateValidationNode(Node):
         }
         evidence = []
         for candidate in snapshot.candidates:
-            visibility, projected_x = projections[candidate.candidate_id]
+            visibility, projection = projections[candidate.candidate_id]
+            projected_x = projection.normalized_x
             association = association_by_id.get(candidate.candidate_id)
             if association is None:
                 evidence.append(FrameEvidence(candidate.candidate_id, visibility, {}))
@@ -184,6 +223,27 @@ class CandidateValidationNode(Node):
             evidence.append(
                 FrameEvidence(candidate.candidate_id, visibility, {detected.color: score})
             )
+
+        self._publish_projection_diagnostics(
+            projections,
+            visible_candidates,
+            associations,
+            detections,
+        )
+
+        with self._state_lock:
+            if generation != self._generation or self._locked:
+                return
+            self._commit_evidence(message, snapshot, evidence, allowed_colors)
+
+    def _commit_evidence(
+        self,
+        message: ColorObjectArray,
+        snapshot: CylinderSnapshot,
+        evidence: list[FrameEvidence],
+        allowed_colors: tuple[str, ...],
+    ) -> None:
+        """Update and publish while reset/lock services hold the same lock."""
 
         active_ids = {item.candidate_id for item in snapshot.candidates}
         validations = self._validator.update(evidence, active_ids, allowed_colors)
@@ -230,44 +290,88 @@ class CandidateValidationNode(Node):
         self._publisher.publish(output)
         self._publish_markers(output)
 
-    def _visibility(self, x: float, y: float) -> tuple[str, float]:
+    def _visibility(self, x: float, y: float):
+        projection = self._projection.project(x, y)
         if x <= 0.0:
-            return "unobserved", math.nan
-        bearing = math.atan2(y, x)
-        scale = self._float("radians_per_normalized_x")
-        normalized_x = bearing / scale + self._float("center_normalized_x")
+            return "unobserved", projection
+        normalized_x = projection.normalized_x
         if not -1.0 <= normalized_x <= 1.0:
-            return "unobserved", normalized_x
+            return "unobserved", projection
         edge = self._float("edge_margin")
         if abs(normalized_x) > 1.0 - edge:
-            return "edge", normalized_x
-        return "visible", normalized_x
+            return "edge", projection
+        return "visible", projection
+
+    def _publish_projection_diagnostics(
+        self,
+        projections,
+        visible_candidates,
+        associations,
+        detections,
+    ) -> None:
+        association_by_id = {
+            candidate.candidate_id: association
+            for candidate, association in zip(visible_candidates, associations)
+        }
+        items = []
+        for candidate_id, (visibility, projection) in projections.items():
+            association = association_by_id.get(candidate_id)
+            detected = None
+            if association is not None and association.detection_index is not None:
+                detected = detections[association.detection_index]
+            items.append(
+                {
+                    "candidate_id": int(candidate_id),
+                    "visibility": visibility,
+                    "bearing": projection.bearing,
+                    "distance": projection.distance,
+                    "predicted_x": projection.normalized_x,
+                    "association": association.status if association else "not_visible",
+                    "track_id": int(detected.track_id) if detected else None,
+                    "color": detected.color if detected else "",
+                    "detected_x": float(detected.normalized_x) if detected else None,
+                    "residual": (
+                        float(detected.normalized_x - projection.normalized_x)
+                        if detected
+                        else None
+                    ),
+                }
+            )
+        message = String()
+        message.data = json.dumps(
+            {"model": self._projection.model, "candidates": items},
+            separators=(",", ":"),
+        )
+        self._diagnostics_publisher.publish(message)
 
     def _lock(self, request, response):
         del request
-        if self._last_output is None or not self._last_output.ready:
-            response.success = False
-            response.message = "validated inventory is not ready"
-            return response
-        self._locked = True
-        self._last_output.locked = True
-        self._publisher.publish(self._last_output)
-        self._publish_markers(self._last_output)
+        with self._state_lock:
+            if self._last_output is None or not self._last_output.ready:
+                response.success = False
+                response.message = "validated inventory is not ready"
+                return response
+            self._locked = True
+            self._last_output.locked = True
+            self._publisher.publish(self._last_output)
+            self._publish_markers(self._last_output)
         response.success = True
         response.message = "validated snapshot locked"
         return response
 
     def _reset(self, request, response):
         del request
-        self._validator.clear()
-        self._snapshot = None
-        self._last_output = None
-        self._locked = False
-        markers = MarkerArray()
-        clear = Marker()
-        clear.action = Marker.DELETEALL
-        markers.markers.append(clear)
-        self._marker_publisher.publish(markers)
+        with self._state_lock:
+            self._generation += 1
+            self._validator.clear()
+            self._snapshot = None
+            self._last_output = None
+            self._locked = False
+            markers = MarkerArray()
+            clear = Marker()
+            clear.action = Marker.DELETEALL
+            markers.markers.append(clear)
+            self._marker_publisher.publish(markers)
         response.success = True
         response.message = "candidate validation reset"
         return response
