@@ -10,6 +10,7 @@ from cylinder_push_planner.geometry import (
     destination_slot,
     generate_reobservation_viewpoints,
     local_offset_to_map,
+    open_destination_slot,
     path_length,
     path_stays_outside,
     point_sets_stable,
@@ -124,6 +125,19 @@ def test_destination_slots_are_centered_and_extensible() -> None:
     )
     with pytest.raises(ValueError):
         destination_slot(1.0, 0.0, 2, 2, 0.18)
+
+
+def test_open_destination_slots_preserve_nominal_pair_and_extend_outward() -> None:
+    slots = tuple(open_destination_slot(1.5, 0.0, i, 2, 0.18) for i in range(4))
+    expected = ((1.5, -0.09), (1.5, 0.09), (1.5, -0.27), (1.5, 0.27))
+    for actual, wanted in zip(slots, expected):
+        assert actual == pytest.approx(wanted)
+
+
+def test_open_destination_accepts_color_with_zero_inventory_hint() -> None:
+    assert open_destination_slot(1.5, 0.0, 0, 0, 0.18) == pytest.approx(
+        (1.5, 0.0)
+    )
 
 
 def test_convex_hull_discards_interior_points() -> None:

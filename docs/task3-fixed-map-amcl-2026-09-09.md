@@ -7,8 +7,9 @@ Task 3 now uses two distinct maps:
 - one immutable occupancy grid for localization;
 - one replaceable cylinder snapshot for sorting.
 
-The occupancy grid is captured exactly once after the initial complete
-inventory is locked. GMapping is then stopped from processing scans and from
+The occupancy grid is captured exactly once after the initial inventory is
+locked, or after the 15-second collection deadline has produced at least one
+validated target. GMapping is then stopped from processing scans and from
 broadcasting `map -> odom`; AMCL takes sole ownership of that transform. After
 each cylinder is delivered, the remaining-cylinder snapshot is rebuilt in the
 same fixed `map` frame, but the AMCL occupancy grid is not rebuilt.
@@ -23,7 +24,9 @@ the translation/yaw discontinuities seen in the September 9 bags.
 2. `task3_simple.launch.py` starts perception, snapshot construction, an
    inactive-until-mapped AMCL, the handoff node, and the path controller.
 3. `/simple_task3/run_all` resets perception and starts the initial inventory.
-4. When all configured cylinders are validated and locked, the handoff node:
+4. When all configured cylinders are validated and locked, the handoff node
+   starts automatically. If the 15-second deadline is reached first, the
+   controller requests the same handoff using the validated subset. The node:
    - copies the latest `/map` and `map -> base_footprint` pose;
    - atomically saves `task3_initial.pgm` and `task3_initial.yaml`;
    - calls `/slam_gmapping/set_tracking_enabled` with `false`;
@@ -33,6 +36,14 @@ the translation/yaw discontinuities seen in the September 9 bags.
 5. The controller plans and moves only after this ready state.
 6. At the end of each push, only the cylinder inventory and exclusions are
    changed. Raw `/scan`, wheel/IMU-fused `/odom`, and AMCL continue running.
+7. Later collections also wait up to 15 seconds. On timeout, every object in
+   the `validated` state may enter the route planner, regardless of configured
+   inventory counts. Extra objects receive additional same-color destination
+   slots. After at least one delivery, an empty 15-second window completes the
+   open task; at initial startup, an empty window continues collecting.
+   A `validated` color remains eligible when its hinted count is zero as long
+   as that color has a configured destination; colors without a destination
+   remain ineligible.
 
 There must never be two live Task 3 launches, and GMapping and AMCL must never
 simultaneously broadcast `map -> odom`.

@@ -115,6 +115,8 @@ class ColorObjectDetectorNode(Node):
             "red": [
                 ([0, 205, 100], [6, 255, 190]),
                 ([168, 205, 100], [179, 255, 190]),
+                ([0, 219, 37], [8, 255, 109]),
+                ([177, 219, 37], [179, 255, 109]),
             ],
         }
         colors = tuple(str(item) for item in self.get_parameter("colors").value)

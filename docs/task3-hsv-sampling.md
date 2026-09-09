@@ -57,11 +57,12 @@ suggested ROS parameter block. Review that report before copying values into
 `config/perception.yaml`; the analyser deliberately does not modify the active
 configuration automatically.
 
-As of the latest 2026-09-07 update, the official Task 3 colors are blue, a new
+As of the latest 2026-09-10 update, the official Task 3 colors are blue, a new
 green, and red. Pink and the earlier green and black targets are retired. Their
 samples must not be relabelled as background: keep them under their original
 labels so they are excluded from both the target fit and background-overlap
-calculation. Blue and red retain their previously accepted ranges.
+calculation. Blue retains its previously accepted range; red keeps its two
+accepted ranges and adds two dark-red ranges described below.
 
 Black is classified primarily by low value (`V`). Hue and saturation are
 unstable for nearly black pixels, so the analyser deliberately proposes the
@@ -88,6 +89,21 @@ analyser proposed `[63, 73, 52]` through `[86, 255, 133]` with no background
 overlap measurable because this CSV contains no background samples. This is
 therefore configured as a second green range alongside the previous range;
 its false-positive rate must be checked in the live acceptance image.
+
+On 2026-09-10 red was sampled again under a darker appearance. The CSV contains
+38 red clicks (4,598 pixels). The repeatable analyser proposed
+`[0,219,37]` through `[8,255,109]` and `[177,219,37]` through
+`[179,255,109]`; their union covers 98.91% of the new red pixels, while the
+union of all old and new red ranges covers 99.80%. The existing two red ranges
+remain unchanged and the new ranges are configured as ranges 3 and 4.
+
+The same CSV contains 27 clicks labelled blue, but their median HSV
+(`[1,255,85]`) is effectively the same as the red-labelled samples
+(`[2,255,78]`). They were collected before switching the sampler's active
+label and are excluded from both the blue calibration and the formal red fit.
+The expanded red union overlaps 0% of the retained 11,858-pixel green sample.
+No background samples were captured in this red-only session, so live
+false-positive inspection remains required.
 
 ## View detector output
 

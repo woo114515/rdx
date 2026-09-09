@@ -13,6 +13,24 @@ pose from the same instant. AMCL then remains the only `map -> odom` owner for
 the complete sorting task. Later five/four/... cylinder locks update only the
 object snapshot; they never replace the localization map.
 
+Each collection at the saved home pose prefers the complete configured hint
+but has a 15-second deadline. At the deadline, the controller freezes the
+current observation and plans from every object whose state is `validated`;
+uncertain, unobserved, and rejected candidates are excluded. With
+`open_inventory_mode=true`, configured counts do not limit target selection or
+completion: extra physical objects are processed, and per-color destination
+slots extend outward according to the number actually delivered. If the first
+collection reaches the deadline with no validated object, it keeps collecting.
+After at least one delivery, a complete 15-second collection window with no new
+validated object finishes the open task. Delivered destination zones remain
+excluded from subsequent snapshots to prevent repeat selection.
+
+In open mode, `inventory_colors` and `inventory_counts` are only collection
+hints. Eligibility is `state=validated` plus a matching entry in
+`destination_colors`. A configured destination therefore accepts an extra
+object even when that color's hinted count is zero. A color without a
+destination remains ineligible because there is nowhere defined to deliver it.
+
 The GMapping workspace therefore needs all three patches in chronological
 order, ending with
 `reference/vendor-patches/2026-09-09/slam-gmapping-fixed-localization-handoff.patch`.

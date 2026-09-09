@@ -37,7 +37,7 @@ from .lidar_candidates import (
     CandidateAccumulator,
     extract_candidates,
     merge_nearby_observations,
-    select_primary_spatial_group,
+    select_stage_candidates,
 )
 from .inventory import ObjectInventory
 from .map_filter import GridMap, inside_exclusion_zone, is_compact_map_obstacle
@@ -77,6 +77,7 @@ class CylinderSnapshotNode(Node):
             "observation_half_angle": 0.5235987756,
             "observation_max_lateral": 2.0,
             "maximum_group_neighbor_distance": 0.65,
+            "keep_all_groups_after_delivery": False,
             "use_workspace_bounds": False,
             "workspace_min_x": -10.0,
             "workspace_max_x": 10.0,
@@ -253,13 +254,24 @@ class CylinderSnapshotNode(Node):
         stamp = Time.from_msg(scan.header.stamp).nanoseconds / 1e9
         tracked = self._accumulator.update(observations, stamp)
         stable = self._accumulator.stable(self._int("minimum_observations"))
-        selected = select_primary_spatial_group(
-            stable, self._float("maximum_group_neighbor_distance")
+        keep_all_groups = (
+            bool(self.get_parameter("keep_all_groups_after_delivery").value)
+            and bool(self._exclusions)
+        )
+        selected = select_stage_candidates(
+            stable,
+            self._float("maximum_group_neighbor_distance"),
+            keep_all_groups,
         )
         counts["tracked_candidates"] = len(tracked)
         counts["unstable_tracks"] = len(tracked) - len(stable)
         counts["stable_candidates"] = len(stable)
         counts["group_rejected"] = len(stable) - len(selected)
+        counts["group_selection_mode"] = (
+            "all_stable_after_delivery"
+            if keep_all_groups
+            else "largest_connected_group"
+        )
         counts["published_candidates"] = len(selected)
         counts["expected_candidates"] = self._inventory.total
         self._publish_filter_diagnostics(scan, counts)

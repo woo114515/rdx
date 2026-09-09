@@ -32,10 +32,13 @@ from cylinder_push_planner.geometry import (
     Target,
     destination_slot,
     local_offset_to_map,
+    open_destination_slot,
     select_right_first,
 )
 from cylinder_push_planner.inventory_cycle import inventory_after_delivery
 from cylinder_push_planner.task_workflow import (
+    collection_snapshot_mode,
+    open_inventory_collection_complete,
     snapshot_matches_collection,
     validate_inventory,
 )
@@ -96,6 +99,7 @@ class SimpleTaskController(Node):
             "localization_status_topic": "/simple_task3/localization_status",
             "inventory_colors": ["blue", "green", "red"],
             "inventory_counts": [2, 2, 2],
+            "open_inventory_mode": False,
             "destination_colors": ["blue", "green", "red"],
             "destination_slot_spacing": 0.18,
             "staging_clearance": 0.25,
@@ -105,12 +109,12 @@ class SimpleTaskController(Node):
             "delivered_exclusion_radius": 0.18,
             "maximum_route_radius": 3.0,
             "control_rate": 10.0,
-            "minimum_linear_speed": 0.15,
-            "approach_speed": 0.15,
-            "contact_speed": 0.15,
-            "push_speed": 0.15,
-            "release_speed": 0.15,
-            "return_speed": 0.15,
+            "minimum_linear_speed": 0.25,
+            "approach_speed": 0.25,
+            "contact_speed": 0.25,
+            "push_speed": 0.25,
+            "release_speed": 0.25,
+            "return_speed": 0.25,
             "angular_gain": 3.0,
             "maximum_angular_speed": 0.50,
             "heading_tolerance": 0.08,
@@ -137,7 +141,7 @@ class SimpleTaskController(Node):
             "push_timeout": 60.0,
             "release_timeout": 10.0,
             "return_timeout": 50.0,
-            "snapshot_wait_timeout": 120.0,
+            "snapshot_wait_timeout": 15.0,
             "home_settle_cycles": 3,
             "target_acquire_distance": 0.65,
             "target_maximum_distance": 0.32,
@@ -229,6 +233,9 @@ class SimpleTaskController(Node):
         self._exclusion_update = self.create_client(
             SetSnapshotExclusions, "/cylinder_snapshot/set_exclusions"
         )
+        self._localization_handoff = self.create_client(
+            Trigger, "/simple_task3/localization_handoff"
+        )
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
 
@@ -252,6 +259,7 @@ class SimpleTaskController(Node):
         self._task_home: tuple[float, float, float] | None = None
         self._field_center: tuple[float, float] | None = None
         self._initial_counts: dict[str, int] = {}
+        self._delivered_color_counts: dict[str, int] = {}
         self._delivered_destinations: list[tuple[float, float]] = []
         self._previous_map_pose: tuple[float, float, float] | None = None
         self._previous_map_pose_time = 0.0
@@ -259,6 +267,8 @@ class SimpleTaskController(Node):
         self._home_settle = 0
         self._run_all_active = False
         self._operation_busy = False
+        self._partial_snapshot_active = False
+        self._partial_handoff_requested = False
         self._fixed_localization_ready = False
         self._localization_owner = "unknown"
         self._generation = 0
@@ -268,7 +278,11 @@ class SimpleTaskController(Node):
         self.get_logger().info("Simple Task 3 controller ready; motion is gated")
 
     def _on_snapshot(self, message: ValidatedCylinderArray) -> None:
-        if self._state not in COLLECTION_STATES or self._expected_inventory is None:
+        if (
+            self._state not in COLLECTION_STATES
+            or self._expected_inventory is None
+            or self._partial_snapshot_active
+        ):
             return
         stamp = self._stamp_seconds(message.header.stamp)
         colors, counts = self._expected_inventory
@@ -336,9 +350,21 @@ class SimpleTaskController(Node):
 
         self._run_all_active = run_all
         self._terminate("preparing", "resetting perception", clear_plan=True)
+        self._partial_snapshot_active = False
+        self._partial_handoff_requested = False
         self._task_home = None
         self._field_center = None
-        self._initial_counts = dict(zip(colors, counts))
+        configured_counts = dict(zip(colors, counts))
+        destination_colors = tuple(
+            str(value) for value in self.get_parameter("destination_colors").value
+        )
+        # Open inventory treats counts only as a perception/readiness hint.
+        # Eligibility instead follows the configured destination colors, so a
+        # real extra object remains processable even when its hint is zero.
+        self._initial_counts = {
+            color: configured_counts.get(color, 0) for color in destination_colors
+        }
+        self._delivered_color_counts = {color: 0 for color in destination_colors}
         self._delivered_destinations.clear()
         self._expected_inventory = (tuple(colors), tuple(counts))
         exclusions = SetSnapshotExclusions.Request()
@@ -390,8 +416,11 @@ class SimpleTaskController(Node):
 
     def _begin_cycle(self) -> str:
         snapshot = self._snapshot
-        if snapshot is None or not snapshot.ready or not snapshot.locked:
-            raise ValueError("validated snapshot is not ready and locked")
+        mode = self._collection_snapshot_mode()
+        if mode in {"waiting", "waiting_for_validated"}:
+            raise ValueError("validated snapshot is not ready and collection is active")
+        if snapshot is None:
+            raise ValueError("validated snapshot is unavailable")
         if self._bool("require_fixed_localization") and not self._fixed_localization_ready:
             raise ValueError("fixed-map AMCL localization is not ready")
         if not self._exclusive_command_owner():
@@ -399,7 +428,12 @@ class SimpleTaskController(Node):
         pose = self._robot_pose(self._string("fixed_frame"))
         if pose is None:
             raise ValueError("map-frame robot pose is unavailable")
-        plan = self._make_plan(pose, snapshot)
+        self._partial_snapshot_active = mode == "partial"
+        plan = self._make_plan(
+            pose,
+            snapshot,
+            allow_partial=self._partial_snapshot_active,
+        )
         self._plan = plan
         self._publish_plan(plan)
         self._activate_plan(pose)
@@ -419,6 +453,8 @@ class SimpleTaskController(Node):
         self,
         pose: tuple[float, float, float],
         snapshot: ValidatedCylinderArray,
+        *,
+        allow_partial: bool = False,
     ) -> DirectCyclePlan:
         fixed_frame = self._string("fixed_frame")
         source_frame = snapshot.header.frame_id or fixed_frame
@@ -440,7 +476,9 @@ class SimpleTaskController(Node):
             )
         )
         expected = sum(int(value) for value in snapshot.expected_color_counts)
-        if len(targets) != expected:
+        if not targets:
+            raise ValueError("snapshot has no validated targets")
+        if not allow_partial and len(targets) != expected:
             raise ValueError(
                 f"snapshot has {len(targets)} validated targets; expected {expected}"
             )
@@ -494,17 +532,28 @@ class SimpleTaskController(Node):
         counts = tuple(int(value) for value in snapshot.expected_color_counts)
         current = dict(zip(colors, counts))
         initial = self._initial_counts.get(color)
-        if initial is None or current.get(color, 0) < 1:
-            raise ValueError(f"invalid current inventory for {color!r}")
+        if initial is None:
+            raise ValueError(f"no destination is configured for color {color!r}")
         local_x = self._float(f"destinations.{color}.x")
         local_y = self._float(f"destinations.{color}.y")
-        local_x, local_y = destination_slot(
-            local_x,
-            local_y,
-            initial - current[color],
-            initial,
-            self._float("destination_slot_spacing"),
-        )
+        if self._bool("open_inventory_mode"):
+            local_x, local_y = open_destination_slot(
+                local_x,
+                local_y,
+                self._delivered_color_counts.get(color, 0),
+                initial,
+                self._float("destination_slot_spacing"),
+            )
+        else:
+            if current.get(color, 0) < 1:
+                raise ValueError(f"invalid current inventory for {color!r}")
+            local_x, local_y = destination_slot(
+                local_x,
+                local_y,
+                initial - current[color],
+                initial,
+                self._float("destination_slot_spacing"),
+            )
         return local_offset_to_map(
             field_center[0], field_center[1], home[2], local_x, local_y
         )
@@ -621,26 +670,104 @@ class SimpleTaskController(Node):
             self._align_home(pose)
 
     def _tick_automation(self) -> None:
-        if not self._run_all_active or self._operation_busy:
+        if self._operation_busy:
             return
         if self._state not in COLLECTION_STATES:
             return
-        if time.monotonic() - self._phase_started > self._float(
-            "snapshot_wait_timeout"
-        ):
-            self._abort("timed out waiting for a locked snapshot")
+        mode = self._collection_snapshot_mode()
+        if mode == "waiting":
             return
-        snapshot = self._snapshot
-        if snapshot is None or not snapshot.ready or not snapshot.locked:
+        if mode == "waiting_for_validated":
+            if open_inventory_collection_complete(
+                self._bool("open_inventory_mode"),
+                len(self._delivered_destinations),
+                mode,
+                self._snapshot is not None,
+            ):
+                self._run_all_active = False
+                self._terminate(
+                    "task_complete",
+                    "open inventory complete: no validated target during the "
+                    "collection window",
+                )
+                return
+            waiting_reason = (
+                "collection deadline reached; waiting for first validated target"
+            )
+            if self._reason != waiting_reason:
+                self._reason = waiting_reason
+                self._publish_status()
             return
+        if mode == "partial":
+            # Freeze the exact validated subset selected at the deadline while
+            # an initial fixed-map handoff, if needed, finishes asynchronously.
+            self._partial_snapshot_active = True
         if self._bool("require_fixed_localization") and not self._fixed_localization_ready:
-            self._reason = "waiting for fixed-map AMCL localization"
+            if mode == "partial":
+                if not self._request_partial_localization_handoff():
+                    return
+                self._reason = (
+                    "partial snapshot timeout reached; waiting for fixed-map "
+                    "AMCL localization"
+                )
+            else:
+                self._reason = "waiting for fixed-map AMCL localization"
+            self._publish_status()
+            return
+        if not self._run_all_active:
+            self._reason = (
+                "partial validated snapshot ready; call /simple_task3/run_once"
+                if mode == "partial"
+                else "locked validated snapshot ready; call /simple_task3/run_once"
+            )
             self._publish_status()
             return
         try:
             self._begin_cycle()
         except ValueError as error:
             self._abort(f"automatic cycle could not start: {error}")
+
+    def _collection_snapshot_mode(self) -> str:
+        snapshot = self._snapshot
+        validated = (
+            sum(item.state == "validated" for item in snapshot.objects)
+            if snapshot is not None
+            else 0
+        )
+        return collection_snapshot_mode(
+            snapshot_ready=bool(snapshot is not None and snapshot.ready),
+            snapshot_locked=bool(snapshot is not None and snapshot.locked),
+            validated_count=validated,
+            elapsed=max(0.0, time.monotonic() - self._phase_started),
+            timeout=self._float("snapshot_wait_timeout"),
+        )
+
+    def _request_partial_localization_handoff(self) -> bool:
+        if self._partial_handoff_requested:
+            return True
+        if not self._localization_handoff.service_is_ready():
+            self._abort("fixed-map localization handoff service is unavailable")
+            return False
+        self._partial_handoff_requested = True
+        generation = self._generation
+        future = self._localization_handoff.call_async(Trigger.Request())
+
+        def completed(done) -> None:
+            if generation != self._generation:
+                return
+            try:
+                result = done.result()
+            except Exception as error:
+                self._abort(f"partial snapshot localization handoff failed: {error}")
+                return
+            if not result.success:
+                self._abort(
+                    "partial snapshot localization handoff rejected: "
+                    f"{result.message}"
+                )
+
+        future.add_done_callback(completed)
+        return True
 
     def _align(
         self,
@@ -787,15 +914,22 @@ class SimpleTaskController(Node):
     def _finish_cycle(self) -> None:
         assert self._snapshot is not None
         assert self._plan is not None
-        try:
-            colors, counts = inventory_after_delivery(
-                self._snapshot.expected_colors,
-                self._snapshot.expected_color_counts,
-                self._plan.selection.target.color,
+        open_inventory = self._bool("open_inventory_mode")
+        if open_inventory:
+            colors = tuple(self._snapshot.expected_colors)
+            counts = tuple(
+                int(value) for value in self._snapshot.expected_color_counts
             )
-        except ValueError as error:
-            self._abort(str(error))
-            return
+        else:
+            try:
+                colors, counts = inventory_after_delivery(
+                    self._snapshot.expected_colors,
+                    self._snapshot.expected_color_counts,
+                    self._plan.selection.target.color,
+                )
+            except ValueError as error:
+                self._abort(str(error))
+                return
         if not self._services_ready():
             self._abort("perception services disappeared after the cycle")
             return
@@ -811,7 +945,7 @@ class SimpleTaskController(Node):
             ("validation reset", self._validation_reset, Trigger.Request()),
             ("snapshot reset", self._snapshot_reset, Trigger.Request()),
         ]
-        if sum(counts) > 0:
+        if open_inventory or sum(counts) > 0:
             steps.extend(
                 [
                     ("exclusion update", self._exclusion_update, exclusions),
@@ -820,14 +954,24 @@ class SimpleTaskController(Node):
                 ]
             )
         self._delivered_destinations = destinations
+        color = self._plan.selection.target.color
+        self._delivered_color_counts[color] = (
+            self._delivered_color_counts.get(color, 0) + 1
+        )
         self._expected_inventory = (tuple(colors), tuple(counts))
         self._snapshot = None
-        final_state = "task_complete" if sum(counts) == 0 else "collecting_remaining"
-        reason = (
-            "all configured cylinders completed"
-            if sum(counts) == 0
-            else "waiting for the reduced inventory"
-        )
+        if open_inventory:
+            final_state = "collecting_remaining"
+            reason = "waiting for another validated object in open inventory"
+        else:
+            final_state = (
+                "task_complete" if sum(counts) == 0 else "collecting_remaining"
+            )
+            reason = (
+                "all configured cylinders completed"
+                if sum(counts) == 0
+                else "waiting for the reduced inventory"
+            )
         self._state = "finalizing"
         self._publish_status()
         self._run_steps(steps, final_state, reason)
@@ -854,6 +998,7 @@ class SimpleTaskController(Node):
             if label == "snapshot start":
                 self._collection_started = self._now_ros()
                 self._snapshot = None
+                self._partial_snapshot_active = False
             future = client.call_async(request)
 
             def completed(done) -> None:
@@ -1086,18 +1231,26 @@ class SimpleTaskController(Node):
             "architecture": "simple_map_route",
             "execution_enabled": self._bool("execution_enabled"),
             "path_only_mode": self._bool("path_only_mode"),
+            "open_inventory_mode": self._bool("open_inventory_mode"),
             "fixed_localization_ready": self._fixed_localization_ready,
             "localization_owner": self._localization_owner,
             "state": self._state,
             "reason": self._reason,
             "run_all_active": self._run_all_active,
+            "partial_snapshot_active": self._partial_snapshot_active,
+            "collection_timeout": self._float("snapshot_wait_timeout"),
             "target_id": plan.selection.target.candidate_id if plan else -1,
             "target_color": plan.selection.target.color if plan else "",
             "delivered_count": len(self._delivered_destinations),
+            "delivered_color_counts": dict(self._delivered_color_counts),
             "remaining_counts": (
-                list(self._expected_inventory[1])
-                if self._expected_inventory is not None
-                else []
+                []
+                if self._bool("open_inventory_mode")
+                else (
+                    list(self._expected_inventory[1])
+                    if self._expected_inventory is not None
+                    else []
+                )
             ),
         }
         self._status_pub.publish(String(data=json.dumps(payload, sort_keys=True)))
@@ -1133,6 +1286,7 @@ class SimpleTaskController(Node):
             "maximum_path_deviation",
             "scan_timeout",
             "odom_timeout",
+            "snapshot_wait_timeout",
         )
         if any(
             not math.isfinite(self._float(name)) or self._float(name) <= 0

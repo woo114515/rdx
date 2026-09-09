@@ -8,6 +8,7 @@ from cylinder_field_mapping.lidar_candidates import (
     extract_candidates,
     merge_nearby_observations,
     select_primary_spatial_group,
+    select_stage_candidates,
 )
 from cylinder_field_mapping.map_filter import (
     GridMap,
@@ -205,6 +206,38 @@ def test_selects_largest_connected_candidate_group() -> None:
         1.0,
     )
     selected = select_primary_spatial_group(candidates, 0.45)
+    assert [item.candidate_id for item in selected] == [1, 2, 3]
+
+
+def test_initial_stage_still_selects_only_the_primary_group() -> None:
+    accumulator = CandidateAccumulator(association_distance=0.1)
+    candidates = accumulator.update(
+        (
+            (0.0, 0.0, 0.035, 0.8),
+            (0.3, 0.0, 0.035, 0.8),
+            (2.0, 0.0, 0.035, 0.9),
+        ),
+        1.0,
+    )
+
+    selected = select_stage_candidates(candidates, 0.45, False)
+
+    assert [item.candidate_id for item in selected] == [1, 2]
+
+
+def test_mid_task_stage_keeps_an_isolated_last_candidate() -> None:
+    accumulator = CandidateAccumulator(association_distance=0.1)
+    candidates = accumulator.update(
+        (
+            (0.0, 0.0, 0.035, 0.8),
+            (0.3, 0.0, 0.035, 0.8),
+            (2.0, 0.0, 0.035, 0.9),
+        ),
+        1.0,
+    )
+
+    selected = select_stage_candidates(candidates, 0.45, True)
+
     assert [item.candidate_id for item in selected] == [1, 2, 3]
 
 

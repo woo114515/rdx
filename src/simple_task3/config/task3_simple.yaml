@@ -21,6 +21,9 @@ simple_task_controller:
 
     inventory_colors: [blue, green, red]
     inventory_counts: [2, 2, 2]
+    # Counts seed the initial detector only. In open mode, every validated
+    # object is processed and actual delivered totals drive slot allocation.
+    open_inventory_mode: true
     destination_colors: [blue, green, red]
     # Offsets from the first cylinder-group centre in the robot's start axes.
     destinations:
@@ -37,12 +40,12 @@ simple_task_controller:
     transit_clearance: 0.10
 
     control_rate: 10.0
-    minimum_linear_speed: 0.15
-    approach_speed: 0.15
-    contact_speed: 0.15
-    push_speed: 0.15
-    release_speed: 0.15
-    return_speed: 0.15
+    minimum_linear_speed: 0.25
+    approach_speed: 0.25
+    contact_speed: 0.25
+    push_speed: 0.25
+    release_speed: 0.25
+    return_speed: 0.25
     angular_gain: 3.0
     maximum_angular_speed: 0.50
     heading_tolerance: 0.08
@@ -72,7 +75,9 @@ simple_task_controller:
     push_timeout: 60.0
     release_timeout: 10.0
     return_timeout: 50.0
-    snapshot_wait_timeout: 120.0
+    # Prefer a complete locked inventory, then plan from only the targets that
+    # perception has already validated when collection reaches this deadline.
+    snapshot_wait_timeout: 15.0
     home_settle_cycles: 3
 
     target_acquire_distance: 0.65

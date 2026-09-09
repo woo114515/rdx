@@ -69,6 +69,47 @@ RUN_ONCE_COMPLETE_STATES = {"collecting_remaining", "task_complete"}
 AUTOMATIC_COLLECTION_STATES = {"collecting", "collecting_remaining"}
 
 
+def collection_snapshot_mode(
+    snapshot_ready: bool,
+    snapshot_locked: bool,
+    validated_count: int,
+    elapsed: float,
+    timeout: float,
+) -> str:
+    """Choose whether collection should wait, use a full lock, or fall back.
+
+    A partial fallback contains only targets already marked ``validated`` by
+    perception. It does not change the configured inventory, so unseen
+    targets remain due in later collection cycles. If the deadline arrives
+    before any target is validated, collection continues until the first one
+    becomes available rather than entering a terminal failure state.
+    """
+
+    if snapshot_ready and snapshot_locked:
+        return "full"
+    if elapsed < timeout:
+        return "waiting"
+    if validated_count > 0:
+        return "partial"
+    return "waiting_for_validated"
+
+
+def open_inventory_collection_complete(
+    open_inventory_mode: bool,
+    delivered_count: int,
+    snapshot_mode: str,
+    snapshot_received: bool,
+) -> bool:
+    """Finish an open task only after work occurred and the field stayed empty."""
+
+    return (
+        open_inventory_mode
+        and delivered_count > 0
+        and snapshot_mode == "waiting_for_validated"
+        and snapshot_received
+    )
+
+
 def advance_services(state: str) -> tuple[str, str | None, str]:
     """Return the gated service sequence for one explicit workflow advance."""
 

@@ -330,4 +330,30 @@ def select_primary_spatial_group(
         return len(items), mean_confidence, -diameter
 
     selected = max(groups, key=rank)
-    return tuple(sorted((candidates[index] for index in selected), key=lambda x: x.candidate_id))
+    return tuple(
+        sorted(
+            (candidates[index] for index in selected),
+            key=lambda item: item.candidate_id,
+        )
+    )
+
+
+def select_stage_candidates(
+    candidates: Sequence[StableCandidate],
+    maximum_neighbor_distance: float,
+    keep_all_groups: bool,
+) -> tuple[StableCandidate, ...]:
+    """Apply dense-field grouping initially, but retain isolated late targets.
+
+    The initial cylinder inventory is a compact group, so selecting its largest
+    connected component rejects walls and remote clutter. After a delivery,
+    remaining legitimate cylinders can be isolated singletons. At that stage
+    every stable candidate must reach visual validation instead of being
+    discarded before its color can be checked.
+    """
+
+    if maximum_neighbor_distance <= 0.0:
+        raise ValueError("maximum_neighbor_distance must be positive")
+    if keep_all_groups:
+        return tuple(sorted(candidates, key=lambda item: item.candidate_id))
+    return select_primary_spatial_group(candidates, maximum_neighbor_distance)

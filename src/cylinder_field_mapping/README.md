@@ -13,6 +13,12 @@ accumulates only during an explicit observation session. It publishes:
 - `/cylinder_snapshot/candidates`
 - `/cylinder_snapshot/markers`
 
+With `keep_all_groups_after_delivery=true`, the initial observation still
+publishes only the largest connected candidate group. Once the controller
+installs at least one delivered-object exclusion zone, every stable spatial
+group is published for visual validation. This prevents an isolated final
+cylinder from being discarded before its color can be checked.
+
 It never publishes velocity. Start it and begin a fresh observation session:
 
 ```bash

@@ -62,3 +62,30 @@ def test_competition_inventory_is_two_of_each_color() -> None:
 
     assert parameters["inventory_colors"] == ["blue", "green", "red"]
     assert parameters["inventory_counts"] == [2, 2, 2]
+    assert parameters["open_inventory_mode"] is True
+
+
+def test_all_linear_motion_phases_use_twenty_five_centimetres_per_second() -> None:
+    config = Path(__file__).parents[1] / "config" / "task3_simple.yaml"
+    parameters = yaml.safe_load(config.read_text(encoding="utf-8"))[
+        "simple_task_controller"
+    ]["ros__parameters"]
+
+    for name in (
+        "minimum_linear_speed",
+        "approach_speed",
+        "contact_speed",
+        "push_speed",
+        "release_speed",
+        "return_speed",
+    ):
+        assert parameters[name] == 0.25
+
+
+def test_collection_falls_back_after_fifteen_seconds() -> None:
+    config = Path(__file__).parents[1] / "config" / "task3_simple.yaml"
+    parameters = yaml.safe_load(config.read_text(encoding="utf-8"))[
+        "simple_task_controller"
+    ]["ros__parameters"]
+
+    assert parameters["snapshot_wait_timeout"] == 15.0

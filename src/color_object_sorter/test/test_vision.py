@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
+import yaml
 
 from color_object_sorter.vision import ColorObjectDetector, HsvRange
 
@@ -67,6 +70,23 @@ def test_red_detected_in_both_hue_ranges() -> None:
     result = make_multi_detector().detect(image)
     red = [item for item in result.detections if item.color == "red"]
     assert len(red) == 2
+
+
+def test_active_red_config_appends_dark_ranges_without_replacing_old_ones() -> None:
+    config = Path(__file__).parents[1] / "config" / "perception.yaml"
+    parameters = yaml.safe_load(config.read_text(encoding="utf-8"))[
+        "color_object_detector"
+    ]["ros__parameters"]
+
+    assert parameters["hsv.red.range_count"] == 4
+    assert parameters["hsv.red.lower_1"] == [0, 155, 90]
+    assert parameters["hsv.red.upper_1"] == [4, 255, 195]
+    assert parameters["hsv.red.lower_2"] == [170, 155, 90]
+    assert parameters["hsv.red.upper_2"] == [179, 255, 195]
+    assert parameters["hsv.red.lower_3"] == [0, 219, 37]
+    assert parameters["hsv.red.upper_3"] == [8, 255, 109]
+    assert parameters["hsv.red.lower_4"] == [177, 219, 37]
+    assert parameters["hsv.red.upper_4"] == [179, 255, 109]
 
 
 def test_filters_small_area_noise() -> None:

@@ -150,12 +150,49 @@ def destination_slot(
         raise ValueError("destination slot count must be positive")
     if not 0 <= slot_index < slot_count:
         raise ValueError("destination slot index is outside its configured count")
+    if spacing < 0.0:
+        raise ValueError("destination slot spacing must not be negative")
+    radius = math.hypot(center_x, center_y)
+    if radius <= 1e-9:
+        raise ValueError("destination offset must differ from the field center")
+    if spacing == 0.0:
+        return center_x, center_y
+    offset = (slot_index - 0.5 * (slot_count - 1)) * spacing
+    tangent_x = -center_y / radius
+    tangent_y = center_x / radius
+    return center_x + tangent_x * offset, center_y + tangent_y * offset
+
+
+def open_destination_slot(
+    center_x: float,
+    center_y: float,
+    slot_index: int,
+    nominal_count: int,
+    spacing: float,
+) -> tuple[float, float]:
+    """Return a stable slot while allowing more objects than configured.
+
+    The nominal slots retain their existing centred layout. Extra objects are
+    placed alternately beyond the two ends, so an open inventory never needs a
+    predeclared final count.
+    """
+
+    if slot_index < 0 or nominal_count < 0:
+        raise ValueError("slot indices and nominal count must be non-negative")
     if spacing <= 0.0:
         raise ValueError("destination slot spacing must be positive")
     radius = math.hypot(center_x, center_y)
     if radius <= 1e-9:
         raise ValueError("destination offset must differ from the field center")
-    offset = (slot_index - 0.5 * (slot_count - 1)) * spacing
+
+    base_count = max(1, nominal_count)
+    if slot_index < base_count:
+        offset = (slot_index - 0.5 * (base_count - 1)) * spacing
+    else:
+        extra = slot_index - base_count
+        extension = (extra // 2 + 1) * spacing
+        edge = 0.5 * (base_count - 1) * spacing
+        offset = -edge - extension if extra % 2 == 0 else edge + extension
     tangent_x = -center_y / radius
     tangent_y = center_x / radius
     return center_x + tangent_x * offset, center_y + tangent_y * offset
@@ -391,6 +428,7 @@ def build_push_preview(
     delivered_exclusion_radius: float = 0.0,
     task_home: tuple[float, float, float] | None = None,
     allow_local_approach_inside_keepout: bool = False,
+    target_waypoint: tuple[float, float] | None = None,
 ) -> PushPreviewPlan:
     """Build a collision-screened geometric preview without commanding motion."""
 
@@ -442,7 +480,26 @@ def build_push_preview(
             "destination exclusion zone overlaps a remaining cylinder"
         )
 
-    candidates = _curve_candidates(target_start, destination, keepout)
+    if target_waypoint is None:
+        candidates = _curve_candidates(target_start, destination, keepout)
+    else:
+        if not all(math.isfinite(value) for value in target_waypoint):
+            raise ValueError("target waypoint must be finite")
+        if math.dist(target_start, target_waypoint) < 0.05:
+            raise ValueError("target waypoint is too close to the selected target")
+        if math.dist(target_waypoint, destination) < 0.05:
+            raise ValueError("target waypoint is too close to the destination")
+        # Bound planning work on the RDK X5: curve around the group only on
+        # the first leg, then connect the waypoint to the destination.
+        second = _quadratic_bezier(
+            target_waypoint,
+            _midpoint(target_waypoint, destination),
+            destination,
+        )
+        candidates = tuple(
+            _deduplicated_path(first + second[1:])
+            for first in _curve_candidates(target_start, target_waypoint, keepout)
+        )
     best = None
     for target_path in candidates:
         robot_path = _offset_behind_path(target_path, contact_offset)
@@ -513,13 +570,38 @@ def build_push_preview(
     release_index = min(
         range(len(robot_path)), key=lambda index: math.dist(robot_path[index], release)
     )
-    return_path = _deduplicated_path(
-        (release,)
-        + tuple(reversed(robot_path[: release_index + 1]))
-        + (staging,)
-        + tuple(reversed(approach_path[:-1]))
-        + ((home_x, home_y),)
-    )
+    if target_waypoint is None:
+        return_path = _deduplicated_path(
+            (release,)
+            + tuple(reversed(robot_path[: release_index + 1]))
+            + (staging,)
+            + tuple(reversed(approach_path[:-1]))
+            + ((home_x, home_y),)
+        )
+    else:
+        # The base is empty after release, so choose the shortest checked
+        # return curve instead of retracing the acquisition leg.
+        return_candidates = tuple(
+            path
+            for path in _curve_candidates(release, (home_x, home_y), keepout)
+            if polyline_outside_keepout(path, keepout)
+            and polyline_clear_of_targets(
+                path,
+                (
+                    Target(
+                        selection.target.candidate_id,
+                        destination_x,
+                        destination_y,
+                        selection.target.color,
+                        selection.target.radius,
+                    ),
+                ),
+                max(contact_offset, selection.target.radius + 0.03),
+            )
+        )
+        if not return_candidates:
+            raise ValueError("no empty return curve reaches task home")
+        return_path = min(return_candidates, key=path_length)
     return_is_clear = polyline_outside_keepout(return_path, keepout)
     if allow_local_approach_inside_keepout and not return_is_clear:
         return_is_clear = polyline_clear_of_targets(
@@ -702,6 +784,55 @@ def select_right_first(
     staging_distance = envelope_radius + staging_clearance
     staging_x = circle.x + radial_x * staging_distance
     staging_y = circle.y + radial_y * staging_distance
+    staging_yaw = math.atan2(target.y - staging_y, target.x - staging_x)
+    return SelectionPlan(
+        target=target,
+        envelope_x=circle.x,
+        envelope_y=circle.y,
+        envelope_radius=envelope_radius,
+        staging_x=staging_x,
+        staging_y=staging_y,
+        staging_yaw=staging_yaw,
+    )
+
+
+def select_nearest_to_reference(
+    targets: Sequence[Target],
+    reference_x: float,
+    reference_y: float,
+    staging_clearance: float,
+) -> SelectionPlan:
+    """Select the cylinder nearest a fixed task reference point."""
+
+    if not targets:
+        raise ValueError("at least one target is required")
+    if staging_clearance <= 0.0:
+        raise ValueError("staging_clearance must be positive")
+    if not all(math.isfinite(value) for value in (reference_x, reference_y)):
+        raise ValueError("reference point must be finite")
+
+    circle = minimum_enclosing_circle([(item.x, item.y) for item in targets])
+    assert circle is not None
+    target = min(
+        targets,
+        key=lambda item: (
+            math.hypot(item.x - reference_x, item.y - reference_y),
+            item.candidate_id,
+        ),
+    )
+    cylinder_radius = max(item.radius for item in targets)
+    envelope_radius = circle.radius + cylinder_radius
+
+    outward_x = target.x - reference_x
+    outward_y = target.y - reference_y
+    norm = math.hypot(outward_x, outward_y)
+    if norm < 1e-9:
+        outward_x, outward_y = 1.0, 0.0
+    else:
+        outward_x /= norm
+        outward_y /= norm
+    staging_x = target.x + staging_clearance * outward_x
+    staging_y = target.y + staging_clearance * outward_y
     staging_yaw = math.atan2(target.y - staging_y, target.x - staging_x)
     return SelectionPlan(
         target=target,

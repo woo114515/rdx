@@ -26,11 +26,17 @@ color_object_detector:
     hsv.green.upper_1: [85, 230, 135]
     hsv.green.lower_2: [63, 73, 52]
     hsv.green.upper_2: [86, 255, 133]
-    hsv.red.range_count: 2
+    hsv.red.range_count: 4
     hsv.red.lower_1: [0, 155, 90]
     hsv.red.upper_1: [4, 255, 195]
     hsv.red.lower_2: [170, 155, 90]
     hsv.red.upper_2: [179, 255, 195]
+    # Additional dark-red appearance sampled on 2026-09-10. Keep the two
+    # accepted ranges above unchanged; these ranges extend rather than replace.
+    hsv.red.lower_3: [0, 219, 37]
+    hsv.red.upper_3: [8, 255, 109]
+    hsv.red.lower_4: [177, 219, 37]
+    hsv.red.upper_4: [179, 255, 109]
 
 color_lidar_fusion:
   ros__parameters:
