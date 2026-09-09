@@ -1,0 +1,94 @@
+--- a/slam_gmapping/include/slam_gmapping/slam_gmapping.h
++++ b/slam_gmapping/include/slam_gmapping/slam_gmapping.h
+@@ -30,6 +30,7 @@
+ #include "rclcpp/rclcpp.hpp"
+ #include "sensor_msgs/msg/laser_scan.hpp"
+ #include "std_msgs/msg/float64.hpp"
++#include "std_srvs/srv/set_bool.hpp"
+ #include "nav_msgs/msg/occupancy_grid.hpp"
+ #include "nav_msgs/msg/map_meta_data.hpp"
+ #include "geometry_msgs/msg/pose.hpp"
+@@ -56,6 +57,7 @@
+     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr entropy_publisher_;
+     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr sst_;
+     rclcpp::Publisher<nav_msgs::msg::MapMetaData>::SharedPtr sstm_;
++    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr map_update_service_;
+ 
+     std::shared_ptr<tf2_ros::Buffer> buffer_;
+     std::shared_ptr<tf2_ros::TransformListener> tfl_;
+@@ -91,6 +93,8 @@
+ 
+     tf2::Duration map_update_interval_;
+     tf2::TimePoint last_map_update_;
++    bool map_updates_enabled_;
++    std::mutex map_update_control_mutex_;
+     tf2::Transform map_to_odom_;
+     std::mutex map_to_odom_mutex_;
+     std::mutex map_mutex_;
+--- a/slam_gmapping/src/slam_gmapping.cpp
++++ b/slam_gmapping/src/slam_gmapping.cpp
+@@ -68,6 +68,7 @@
+     map_update_interval_ = tf2::durationFromSec(
+         this->declare_parameter<double>("map_update_interval", 0.5));
+     last_map_update_ = tf2::TimePointZero;
++    map_updates_enabled_ = true;
+     maxUrange_ = 80.0;  maxRange_ = 0.0;
+     minimum_score_ = 0;
+     sigma_ = 0.05;
+@@ -103,5 +104,21 @@
+     sst_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("map", rclcpp::SystemDefaultsQoS());
+     sstm_ = this->create_publisher<nav_msgs::msg::MapMetaData>("map_metadata", rclcpp::SystemDefaultsQoS());
++    map_update_service_ = this->create_service<std_srvs::srv::SetBool>(
++        "/slam_gmapping/set_map_updates",
++        [this](
++            const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
++            std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
++            std::lock_guard<std::mutex> lock(map_update_control_mutex_);
++            map_updates_enabled_ = request->data;
++            if (map_updates_enabled_) {
++                // Force one fresh grid on the next accepted stationary scan.
++                last_map_update_ = tf2::TimePointZero;
++            }
++            response->success = true;
++            response->message = map_updates_enabled_
++                ? "occupancy-grid rebuilds enabled"
++                : "occupancy-grid rebuilds paused; scan matching remains active";
++        });
+     scan_filter_sub_ = std::make_shared<message_filters::Subscriber<sensor_msgs::msg::LaserScan>>
+             (node_, "scan", rclcpp::SensorDataQoS().get_rmw_qos_profile());
+ //    sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+@@ -382,7 +401,8 @@
+         map_to_odom_mutex_.unlock();
+ 
+         tf2::TimePoint timestamp = tf2_ros::fromMsg(scan->header.stamp);
+-        if(!got_map_ || (timestamp - last_map_update_) > map_update_interval_)
++        std::lock_guard<std::mutex> update_lock(map_update_control_mutex_);
++        if(map_updates_enabled_ && (!got_map_ || (timestamp - last_map_update_) > map_update_interval_))
+         {
+             updateMap(scan);
+             last_map_update_ = timestamp;
+--- a/slam_gmapping/CMakeLists.txt
++++ b/slam_gmapping/CMakeLists.txt
+@@ -18,5 +18,6 @@
+ find_package(ament_cmake REQUIRED)
+ find_package(std_msgs REQUIRED)
++find_package(std_srvs REQUIRED)
+ find_package(nav_msgs REQUIRED)
+ find_package(tf2 REQUIRED)
+ find_package(tf2_ros REQUIRED)
+@@ -48,5 +49,6 @@
+         message_filters
+         sensor_msgs
+         nav_msgs
++        std_srvs
+         tf2_geometry_msgs
+         openslam_gmapping)
+--- a/slam_gmapping/package.xml
++++ b/slam_gmapping/package.xml
+@@ -22,5 +22,6 @@
+ 
+     <depend>std_msgs</depend>
++    <depend>std_srvs</depend>
+     <depend>nav_msgs</depend>
+     <depend>tf2</depend>
+     <depend>tf2_ros</depend>

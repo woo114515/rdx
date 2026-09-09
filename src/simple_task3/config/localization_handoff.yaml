@@ -1,0 +1,20 @@
+task3_localization_handoff:
+  ros__parameters:
+    validated_topic: /cylinder_snapshot/validated_objects
+    dynamic_map_topic: /map
+    fixed_map_topic: /task3/fixed_map
+    initial_pose_topic: /initialpose
+    amcl_pose_topic: /amcl_pose
+    gmapping_tracking_service: /slam_gmapping/set_tracking_enabled
+    fixed_frame: map
+    robot_frame: base_footprint
+    map_directory: /home/sunrise/task3_maps
+    map_basename: task3_initial
+    automatic_handoff: true
+    transform_timeout: 0.20
+    handoff_settle_time: 0.60
+    amcl_timeout: 15.0
+    maximum_handoff_position_error: 0.20
+    maximum_handoff_yaw_error: 0.20
+    initial_position_variance: 0.01
+    initial_yaw_variance: 0.01

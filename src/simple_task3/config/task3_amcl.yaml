@@ -1,0 +1,47 @@
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    global_frame_id: map
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    scan_topic: /scan
+    tf_broadcast: true
+    transform_tolerance: 0.30
+    robot_model_type: nav2_amcl::OmniMotionModel
+    laser_model_type: likelihood_field
+    laser_min_range: 0.15
+    laser_max_range: 20.0
+    laser_likelihood_max_dist: 2.0
+    max_beams: 90
+    min_particles: 500
+    max_particles: 2000
+    pf_err: 0.05
+    pf_z: 0.99
+    update_min_d: 0.04
+    update_min_a: 0.04
+    resample_interval: 1
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    do_beamskip: false
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    sigma_hit: 0.2
+    lambda_short: 0.1
+    z_hit: 0.5
+    z_short: 0.05
+    z_max: 0.05
+    z_rand: 0.5
+    save_pose_rate: 0.5
+    first_map_only: true
+    always_reset_initial_pose: false
+    set_initial_pose: false
+
+task3_localization_lifecycle_manager:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    bond_timeout: 4.0
+    node_names: [amcl]

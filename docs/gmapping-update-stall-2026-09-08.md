@@ -130,3 +130,36 @@ The stale pre-build mapping process ignored SIGINT and required termination
 after the new binary was installed. No motion command was issued during that
 deployment or during the completed timing-fix deployment. Full live mapping and
 low-speed navigation regression tests remain pending.
+
+## Task 3 motion-time map reconstruction control, 2026-09-09
+
+Later rosbag analysis showed that the full-grid reconstruction could still
+stall the accepted-scan callback during a push cycle. Repeating an old
+`map -> odom` transform made the controller internally appear to follow its
+route while the physical route rotated away from the field.
+
+The vendor patch now also provides
+`/slam_gmapping/set_map_updates` (`std_srvs/srv/SetBool`). Disabling the service
+guards only `updateMap()`. It deliberately does not bypass `addScan()`, best
+particle pose extraction, or the `map_to_odom_` assignment. The service is
+serialized with `updateMap()`, so a successful disable response means no
+previous grid rebuild is still active. Re-enabling forces a fresh `/map` on the
+next accepted scan.
+
+This was an intermediate Task 3 mitigation. Later runs proved that live
+GMapping scan matching could still rotate `map -> odom` enough to invalidate a
+route, even when grid reconstruction was paused.
+
+## Task 3 fixed-map AMCL handoff, 2026-09-09
+
+Task 3 now uses the additional patch
+`reference/vendor-patches/2026-09-09/slam-gmapping-fixed-localization-handoff.patch`.
+It adds `/slam_gmapping/set_tracking_enabled`; disabling it stops both scan
+processing and GMapping's `map -> odom` broadcast after the initial map and
+robot pose have been captured. AMCL then becomes the sole transform owner for
+all push cycles. Subsequent cylinder locks update only the object snapshot,
+not the localization map.
+
+This path is Task 3 infrastructure only. Task 2 continues using its existing
+saved map and AMCL/Nav2 launch and does not call either GMapping control
+service.

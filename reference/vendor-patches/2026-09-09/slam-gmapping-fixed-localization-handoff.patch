@@ -1,0 +1,79 @@
+diff --git a/slam_gmapping/include/slam_gmapping/slam_gmapping.h b/slam_gmapping/include/slam_gmapping/slam_gmapping.h
+index 96cd2c9..6382260 100644
+--- a/slam_gmapping/include/slam_gmapping/slam_gmapping.h
++++ b/slam_gmapping/include/slam_gmapping/slam_gmapping.h
+@@ -23,6 +23,7 @@
+ #ifndef SLAM_GMAPPING_SLAM_GMAPPING_H_
+ #define SLAM_GMAPPING_SLAM_GMAPPING_H_
+ 
++#include <atomic>
+ #include <mutex>
+ #include <thread>
+ #include <memory>
+@@ -65,6 +66,7 @@ private:
+     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr sst_;
+     rclcpp::Publisher<nav_msgs::msg::MapMetaData>::SharedPtr sstm_;
+     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr map_update_service_;
++    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr tracking_control_service_;
+ 
+     std::shared_ptr<tf2_ros::Buffer> buffer_;
+     std::shared_ptr<tf2_ros::TransformListener> tfl_;
+@@ -95,6 +97,7 @@ private:
+     tf2::TimePoint last_map_update_;
+     bool map_updates_enabled_;
+     std::mutex map_update_control_mutex_;
++    std::atomic<bool> tracking_enabled_;
+     tf2::Transform map_to_odom_;
+     std::mutex map_to_odom_mutex_;
+     std::mutex map_mutex_;
+diff --git a/slam_gmapping/src/slam_gmapping.cpp b/slam_gmapping/src/slam_gmapping.cpp
+index 3b26ffb..3dbbbe2 100644
+--- a/slam_gmapping/src/slam_gmapping.cpp
++++ b/slam_gmapping/src/slam_gmapping.cpp
+@@ -69,6 +69,7 @@ void SlamGmapping::init() {
+         this->declare_parameter<double>("map_update_interval", 0.5));
+     last_map_update_ = tf2::TimePointZero;
+     map_updates_enabled_ = true;
++    tracking_enabled_.store(true);
+     maxUrange_ = 80.0;  maxRange_ = 0.0;
+     minimum_score_ = 0;
+     sigma_ = 0.05;
+@@ -121,6 +122,18 @@ void SlamGmapping::startLiveSlam() {
+                 ? "occupancy-grid rebuilds enabled"
+                 : "occupancy-grid rebuilds paused; scan matching remains active";
+         });
++    tracking_control_service_ = this->create_service<std_srvs::srv::SetBool>(
++        "/slam_gmapping/set_tracking_enabled",
++        [this](
++            const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
++            std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
++            tracking_enabled_.store(request->data);
++            response->success = true;
++            response->message = request->data
++                ? "GMapping scan matching and map-to-odom publication enabled"
++                : "GMapping scan matching and map-to-odom publication disabled; "
++                  "fixed-map localizer may take ownership";
++        });
+     scan_filter_sub_ = std::make_shared<message_filters::Subscriber<sensor_msgs::msg::LaserScan>>
+             (node_, "scan", rclcpp::SensorDataQoS().get_rmw_qos_profile());
+ //    sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+@@ -370,6 +383,9 @@ bool SlamGmapping::addScan(const sensor_msgs::msg::LaserScan::ConstSharedPtr sca
+ 
+ 
+ void SlamGmapping::laserCallback(sensor_msgs::msg::LaserScan::ConstSharedPtr scan) {
++    if (!tracking_enabled_.load())
++        return;
++
+     laser_count_++;
+     if ((laser_count_ % throttle_scans_) != 0)
+         return;
+@@ -533,6 +549,9 @@ void SlamGmapping::updateMap(const sensor_msgs::msg::LaserScan::ConstSharedPtr s
+ 
+ void SlamGmapping::publishTransform()
+ {
++    if (!tracking_enabled_.load())
++        return;
++
+     map_to_odom_mutex_.lock();
+     rclcpp::Time tf_expiration = get_clock()->now() + rclcpp::Duration::from_seconds(tf_delay_);
+     geometry_msgs::msg::TransformStamped transform;
