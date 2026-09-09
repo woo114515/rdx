@@ -1,0 +1,150 @@
+diff --git a/yahboomcar_bringup/Mcnamu_driver.py b/yahboomcar_bringup/Mcnamu_driver.py
+--- a/yahboomcar_bringup/Mcnamu_driver.py
++++ b/yahboomcar_bringup/Mcnamu_driver.py
+@@ -73,6 +73,7 @@ class YahboomcarDriver(Node):
+         self._started_at = time.monotonic()
+         self._last_encoder_counts = None
+         self._last_encoder_sample = None
++        self._serial_write_failures = 0
+         self._bus = None
+         self._rgb_light_enabled = True
+         self._command_group = MutuallyExclusiveCallbackGroup()
+@@ -166,7 +167,9 @@ class YahboomcarDriver(Node):
+             return
+         self._ensure_transport_healthy(require_feedback=False)
+         if not self.car.set_car_motion(*command):
+-            raise RuntimeError("serial motion write failed")
++            self._report_serial_write_failure("motion command")
++            return
++        self._serial_write_failures = 0
+         self._last_command = time.monotonic()
+         self._watchdog_stopped = False
+ 
+@@ -188,9 +191,29 @@ class YahboomcarDriver(Node):
+                     "cmd_vel timeout; commanding zero velocity"
+                 )
+             if not self.stop_motion():
+-                raise RuntimeError("watchdog failed to send zero velocity")
++                self._report_serial_write_failure("watchdog zero command")
++                self._watchdog_stopped = False
++                return
++            self._serial_write_failures = 0
+             self._watchdog_stopped = True
+ 
++    def _report_serial_write_failure(self, operation):
++        """Report a failed write without terminating the ROS driver process."""
++        self._serial_write_failures += 1
++        alive, byte_age, error = self.car.get_receive_status()
++        self.get_logger().error(
++            "%s serial write failed; failure_count=%d;thread_alive=%s;"
++            "byte_age=%s;error=%s"
++            % (
++                operation,
++                self._serial_write_failures,
++                str(alive).lower(),
++                self._format_age(byte_age),
++                error or "unknown",
++            ),
++            throttle_duration_sec=1.0,
++        )
++
+     @staticmethod
+     def _fresh(age, timeout):
+         return age is not None and 0.0 <= age <= timeout
+diff --git a/test/test_motion_safety.py b/test/test_motion_safety.py
+--- a/test/test_motion_safety.py
++++ b/test/test_motion_safety.py
+@@ -45,12 +45,16 @@ def test_command_is_stale_at_timeout_boundary():
+     assert command_is_stale(10.0, now=10.25, timeout=0.25)
+ 
+ class FakeCar:
+-    def __init__(self):
++    def __init__(self, write_success=True):
+         self.commands = []
++        self.write_success = write_success
+ 
+     def set_car_motion(self, vx, vy, angular):
+         self.commands.append((vx, vy, angular))
+-        return True
++        return self.write_success
++
++    def get_receive_status(self):
++        return True, 0.01, "serial write failed: test failure"
+ 
+ 
+ class FakeLogger:
+@@ -58,7 +62,8 @@ class FakeLogger:
+         self.errors = []
+         self.warnings = []
+ 
+-    def error(self, message):
++    def error(self, message, **kwargs):
++        del kwargs
+         self.errors.append(message)
+ 
+     def warning(self, message):
+@@ -67,9 +72,11 @@ class FakeLogger:
+ 
+ class FakeDriver:
+     stop_motion = YahboomcarDriver.stop_motion
++    _format_age = staticmethod(YahboomcarDriver._format_age)
++    _report_serial_write_failure = YahboomcarDriver._report_serial_write_failure
+ 
+-    def __init__(self):
+-        self.car = FakeCar()
++    def __init__(self, write_success=True):
++        self.car = FakeCar(write_success=write_success)
+         self.logger = FakeLogger()
+         self.xlinear_limit = 1.0
+         self.ylinear_limit = 1.0
+@@ -78,6 +85,7 @@ class FakeDriver:
+         self._last_command = None
+         self._watchdog_stopped = True
+         self._shutting_down = False
++        self._serial_write_failures = 0
+ 
+     def get_logger(self):
+         return self.logger
+@@ -113,6 +121,21 @@ def test_cmd_vel_callback_stops_after_invalid_input():
+     ]
+ 
+ 
++def test_cmd_vel_write_failure_logs_error_without_raising():
++    driver = FakeDriver(write_success=False)
++    message = Twist()
++    message.linear.x = 0.2
++
++    YahboomcarDriver.cmd_vel_callback(driver, message)
++
++    assert driver.car.commands == [(0.2, 0.0, 0.0)]
++    assert driver._last_command is None
++    assert driver._watchdog_stopped
++    assert len(driver.logger.errors) == 1
++    assert "motion command serial write failed" in driver.logger.errors[0]
++    assert "test failure" in driver.logger.errors[0]
++
++
+ def test_watchdog_commands_zero_after_timeout(monkeypatch):
+     driver = FakeDriver()
+     driver._last_command = 10.0
+@@ -127,6 +150,20 @@ def test_watchdog_commands_zero_after_timeout(monkeypatch):
+         "cmd_vel timeout; commanding zero velocity"
+     ]
+ 
++
++def test_watchdog_write_failure_logs_error_and_retries(monkeypatch):
++    driver = FakeDriver(write_success=False)
++    driver._last_command = 10.0
++    driver._watchdog_stopped = False
++    monkeypatch.setattr(Mcnamu_driver.time, "monotonic", lambda: 10.25)
++
++    YahboomcarDriver.watchdog_callback(driver)
++
++    assert driver.car.commands == [(0.0, 0.0, 0.0)]
++    assert not driver._watchdog_stopped
++    assert len(driver.logger.errors) == 1
++    assert "watchdog zero command serial write failed" in driver.logger.errors[0]
++
+ def test_signed_encoder_delta_handles_normal_changes():
+     assert signed_encoder_delta(125, 100) == 25
+     assert signed_encoder_delta(75, 100) == -25

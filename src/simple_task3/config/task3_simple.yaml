@@ -77,7 +77,7 @@ simple_task_controller:
     return_timeout: 50.0
     # Prefer a complete locked inventory, then plan from only the targets that
     # perception has already validated when collection reaches this deadline.
-    snapshot_wait_timeout: 15.0
+    snapshot_wait_timeout: 5.0
     home_settle_cycles: 3
 
     target_acquire_distance: 0.65

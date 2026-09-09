@@ -32,6 +32,13 @@ adds a Task-3-only `task3_goal_checker` with 0.08 m / 0.10 rad tolerances in
 `params/dwb_nav_params.yaml`. The default `general_goal_checker` remains at the
 vendor 0.25 m / 0.25 rad values for Task 2.
 
+**Superseded configuration note (2026-09-10):** registering both goal checkers
+breaks the vendor Task 2 behavior tree because its `FollowPath` request leaves
+the checker name empty. Apply the follow-up patch in `../2026-09-10/`, which
+restores `goal_checker_plugins` to only `general_goal_checker`. Current
+`simple_task3` does not use DWB; the older Nav2-based Task 3 execution path then
+requires a separate controller parameter file if it is used again.
+
 Task 3 reobservation changes viewpoint through a short Nav2 path around the
 outside of the target group. Direct mecanum strafing is excluded because field
 testing showed substantial lateral slip. The reobservation node independently

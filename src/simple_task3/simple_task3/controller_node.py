@@ -141,7 +141,7 @@ class SimpleTaskController(Node):
             "push_timeout": 60.0,
             "release_timeout": 10.0,
             "return_timeout": 50.0,
-            "snapshot_wait_timeout": 15.0,
+            "snapshot_wait_timeout": 5.0,
             "home_settle_cycles": 3,
             "target_acquire_distance": 0.65,
             "target_maximum_distance": 0.32,

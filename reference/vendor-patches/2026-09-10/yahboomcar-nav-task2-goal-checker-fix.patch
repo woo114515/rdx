@@ -1,0 +1,12 @@
+diff --git a/params/dwb_nav_params.yaml b/params/dwb_nav_params.yaml
+--- a/params/dwb_nav_params.yaml
++++ b/params/dwb_nav_params.yaml
+@@ -135,7 +135,7 @@ controller_server:
+     min_theta_velocity_threshold: 0.001
+     failure_tolerance: 0.3
+     progress_checker_plugin: "progress_checker"
+-    goal_checker_plugins: ["general_goal_checker", "task3_goal_checker"]
++    goal_checker_plugins: ["general_goal_checker"]
+     controller_plugins: ["FollowPath"]
+
+     # Progress checker parameters
